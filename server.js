@@ -121,8 +121,9 @@ app.get("/jogos-hoje", async (req, res) => {
     const apiKey = process.env.API_TENNIS_KEY;
 
     if (!apiKey) {
-      return res.status(500).json({
-        erro: "API_TENNIS_KEY não configurada no ambiente",
+      return res.status(200).json({
+        erro: "API_TENNIS_KEY não configurada no Railway",
+        jogos: [],
       });
     }
 
@@ -156,16 +157,19 @@ app.get("/jogos-hoje", async (req, res) => {
         type: jogo.event_type_type || "",
       }));
 
-    res.json(filtrados);
+    return res.status(200).json({
+      jogos: filtrados,
+    });
   } catch (error) {
     console.error(
       "Erro ao buscar jogos do dia:",
       error.response?.data || error.message
     );
 
-    res.status(500).json({
-      erro: "Erro ao buscar jogos do dia",
-      detalhe: error.message,
+    return res.status(200).json({
+      erro: "Falha ao buscar jogos na API externa",
+      detalhe: error.response?.data || error.message,
+      jogos: [],
     });
   }
 });
