@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -113,6 +114,60 @@ app.delete("/apostas/:id", (req, res) => {
   salvarApostas(novasApostas);
 
   res.json({ mensagem: "Aposta removida com sucesso" });
+});
+
+app.get("/jogos-hoje", async (req, res) => {
+  try {
+    const apiKey = process.env.API_TENNIS_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({
+        erro: "API_TENNIS_KEY não configurada no ambiente",
+      });
+    }
+
+    const hoje = new Date().toISOString().split("T")[0];
+
+    const response = await axios.get("https://api.api-tennis.com/tennis/", {
+      params: {
+        method: "get_fixtures",
+        APIkey: apiKey,
+        date_start: hoje,
+        date_stop: hoje,
+      },
+      timeout: 15000,
+    });
+
+    const jogos = Array.isArray(response.data?.result) ? response.data.result : [];
+
+    const filtrados = jogos
+      .filter((jogo) => {
+        const tipo = jogo.event_type_type || "";
+        return tipo === "Atp Singles" || tipo === "Wta Singles";
+      })
+      .map((jogo) => ({
+        id: jogo.event_key || `${jogo.event_first_player}-${jogo.event_second_player}-${jogo.event_date}`,
+        player1: jogo.event_first_player || "",
+        player2: jogo.event_second_player || "",
+        tournament: jogo.tournament_name || "",
+        time: jogo.event_time || "",
+        date: jogo.event_date || hoje,
+        status: jogo.event_status || "Not Started",
+        type: jogo.event_type_type || "",
+      }));
+
+    res.json(filtrados);
+  } catch (error) {
+    console.error(
+      "Erro ao buscar jogos do dia:",
+      error.response?.data || error.message
+    );
+
+    res.status(500).json({
+      erro: "Erro ao buscar jogos do dia",
+      detalhe: error.message,
+    });
+  }
 });
 
 app.listen(PORT, () => {
