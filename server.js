@@ -45,6 +45,35 @@ function salvarApostas(apostas) {
   }
 }
 
+function normalizarNome(nome) {
+  return String(nome || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function extrairVencedorDoResultado(jogo) {
+  const resultado = jogo?.event_final_result;
+  if (!resultado) return null;
+
+  const partes = String(resultado)
+    .split("-")
+    .map((p) => Number(String(p).trim()));
+
+  if (partes.length < 2 || Number.isNaN(partes[0]) || Number.isNaN(partes[1])) {
+    return null;
+  }
+
+  const [sets1, sets2] = partes;
+
+  if (sets1 === sets2) return null;
+
+  return sets1 > sets2 ? jogo.event_first_player : jogo.event_second_player;
+}
+
 app.get("/", (req, res) => {
   res.json({ status: "BeTennis API rodando 🚀" });
 });
@@ -147,7 +176,9 @@ app.get("/jogos-hoje", async (req, res) => {
         return tipo === "Atp Singles" || tipo === "Wta Singles";
       })
       .map((jogo) => ({
-        id: jogo.event_key || `${jogo.event_first_player}-${jogo.event_second_player}-${jogo.event_date}`,
+        id:
+          jogo.event_key ||
+          `${jogo.event_first_player}-${jogo.event_second_player}-${jogo.event_date}`,
         player1: jogo.event_first_player || "",
         player2: jogo.event_second_player || "",
         tournament: jogo.tournament_name || "",
@@ -170,6 +201,97 @@ app.get("/jogos-hoje", async (req, res) => {
       erro: "Falha ao buscar jogos na API externa",
       detalhe: error.response?.data || error.message,
       jogos: [],
+    });
+  }
+});
+
+app.post("/validar-apostas", async (req, res) => {
+  try {
+    const apiKey = process.env.API_TENNIS_KEY;
+
+    if (!apiKey) {
+      return res.status(200).json({
+        erro: "API_TENNIS_KEY não configurada no Railway",
+        atualizadas: 0,
+        apostas: [],
+      });
+    }
+
+    const hoje = new Date().toISOString().split("T")[0];
+
+    const response = await axios.get("https://api.api-tennis.com/tennis/", {
+      params: {
+        method: "get_fixtures",
+        APIkey: apiKey,
+        date_start: hoje,
+        date_stop: hoje,
+      },
+      timeout: 15000,
+    });
+
+    const jogosApi = Array.isArray(response.data?.result) ? response.data.result : [];
+    const apostas = lerApostas();
+
+    const atualizadas = [];
+
+    for (const aposta of apostas) {
+      if (aposta.resultado === "win" || aposta.resultado === "loss" || aposta.resultado === "void") {
+        continue;
+      }
+
+      const jogo = jogosApi.find((j) => {
+        const mesmoPlayer1 =
+          normalizarNome(j.event_first_player) === normalizarNome(aposta.player1);
+        const mesmoPlayer2 =
+          normalizarNome(j.event_second_player) === normalizarNome(aposta.player2);
+
+        return mesmoPlayer1 && mesmoPlayer2;
+      });
+
+      if (!jogo) {
+        continue;
+      }
+
+      if (String(jogo.event_status || "").toLowerCase() !== "finished") {
+        continue;
+      }
+
+      const vencedor = extrairVencedorDoResultado(jogo);
+
+      if (!vencedor) {
+        aposta.status = "finalizada";
+        aposta.resultado = "void";
+        aposta.updatedAt = new Date().toISOString();
+        atualizadas.push(aposta);
+        continue;
+      }
+
+      aposta.status = "finalizada";
+      aposta.resultado =
+        normalizarNome(aposta.escolha) === normalizarNome(vencedor) ? "win" : "loss";
+      aposta.updatedAt = new Date().toISOString();
+
+      atualizadas.push(aposta);
+    }
+
+    salvarApostas(apostas);
+
+    return res.status(200).json({
+      mensagem: "Validação concluída",
+      atualizadas: atualizadas.length,
+      apostas: atualizadas,
+    });
+  } catch (error) {
+    console.error(
+      "Erro ao validar apostas:",
+      error.response?.data || error.message
+    );
+
+    return res.status(200).json({
+      erro: "Erro ao validar apostas",
+      detalhe: error.response?.data || error.message,
+      atualizadas: 0,
+      apostas: [],
     });
   }
 });
