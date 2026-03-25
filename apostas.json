@@ -1,0 +1,23 @@
+[
+  {
+    "player1": "Elena Rybakina",
+    "player2": "Jessica Pegula",
+    "escolha": "Elena Rybakina",
+    "odd": 1.8,
+    "stake": 100
+  },
+  {
+    "player1": "Martin Landaluce",
+    "player2": "Jiri Lehecka",
+    "escolha": "Jiri Lehecka",
+    "odd": 1.55,
+    "stake": 100
+  },
+  {
+    "player1": "Tommy Paul",
+    "player2": "Arthur Fils",
+    "escolha": "Tommy Paul",
+    "odd": 2.1,
+    "stake": 100
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "jogo": "Elena Rybakina vs Jessica Pegula",
+    "jogador": "Jessica Pegula",
+    "odd": 2.96,
+    "prob_modelo": 36.6322869955157,
+    "ev": 0.08431569506726477,
+    "confianca": "Media",
+    "stake": 2,
+    "data": "2026-03-25T04:10:49.342Z"
+  },
+  {
+    "jogo": "Martin Landaluce vs Jiri Lehecka",
+    "jogador": "Martin Landaluce",
+    "odd": 3.25,
+    "prob_modelo": 33.406852248394,
+    "ev": 0.08572269807280519,
+    "confianca": "Media",
+    "stake": 2,
+    "data": "2026-03-25T04:10:49.344Z"
+  },
+  {
+    "jogo": "Tommy Paul vs Arthur Fils",
+    "jogador": "Tommy Paul",
+    "odd": 2.2,
+    "prob_modelo": 48.137157107231914,
+    "ev": 0.05901745635910216,
+    "confianca": "Media",
+    "stake": 2,
+    "data": "2026-03-25T04:10:49.344Z"
+  }
+]

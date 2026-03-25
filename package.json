@@ -1,0 +1,26 @@
+{
+  "name": "betennis-backend",
+  "version": "1.0.0",
+  "description": "Backend da API BeTennis",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "echo \"Sem testes configurados\" && exit 0"
+  },
+  "keywords": [
+    "tennis",
+    "backend",
+    "express",
+    "api"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.13.6",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1"
+  }
+}
