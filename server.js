@@ -205,7 +205,7 @@ app.get("/jogos-hoje", async (req, res) => {
   }
 });
 
-app.post("/validar-apostas", async (req, res) => {
+app.get("/validar-apostas", async (req, res) => {
   try {
     const apiKey = process.env.API_TENNIS_KEY;
 
