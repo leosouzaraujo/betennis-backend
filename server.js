@@ -88,10 +88,7 @@ function matchJogador(nomeApi, nomeAposta) {
   const inicialApi = api[0][0];
   const inicialAposta = aposta[0][0];
 
-  return (
-    sobrenomeApi === sobrenomeAposta &&
-    inicialApi === inicialAposta
-  );
+  return sobrenomeApi === sobrenomeAposta && inicialApi === inicialAposta;
 }
 
 app.get("/", (req, res) => {
@@ -237,14 +234,18 @@ app.get("/validar-apostas", async (req, res) => {
       });
     }
 
-    const hoje = new Date().toISOString().split("T")[0];
+    const hoje = new Date();
+    const tresDiasAtras = new Date();
+    tresDiasAtras.setDate(hoje.getDate() - 3);
+
+    const formatarData = (data) => data.toISOString().split("T")[0];
 
     const response = await axios.get("https://api.api-tennis.com/tennis/", {
       params: {
         method: "get_fixtures",
         APIkey: apiKey,
-        date_start: hoje,
-        date_stop: hoje,
+        date_start: formatarData(tresDiasAtras),
+        date_stop: formatarData(hoje),
       },
       timeout: 15000,
     });
