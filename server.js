@@ -75,18 +75,29 @@ function extrairVencedorDoResultado(jogo) {
 }
 
 function matchJogador(nomeApi, nomeAposta) {
-  const api = normalizarNome(nomeApi).split(" ");
-  const aposta = normalizarNome(nomeAposta).split(" ");
+  const apiNormalizado = normalizarNome(nomeApi);
+  const apostaNormalizada = normalizarNome(nomeAposta);
 
-  if (!api.length || !aposta.length || !api[0] || !aposta[0]) {
+  if (!apiNormalizado || !apostaNormalizada) {
+    return false;
+  }
+
+  if (apiNormalizado === apostaNormalizada) {
+    return true;
+  }
+
+  const api = apiNormalizado.split(" ");
+  const aposta = apostaNormalizada.split(" ");
+
+  if (!api.length || !aposta.length) {
     return false;
   }
 
   const sobrenomeApi = api[api.length - 1];
   const sobrenomeAposta = aposta[aposta.length - 1];
 
-  const inicialApi = api[0][0];
-  const inicialAposta = aposta[0][0];
+  const inicialApi = api[0] ? api[0][0] : "";
+  const inicialAposta = aposta[0] ? aposta[0][0] : "";
 
   return sobrenomeApi === sobrenomeAposta && inicialApi === inicialAposta;
 }
