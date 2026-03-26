@@ -74,6 +74,26 @@ function extrairVencedorDoResultado(jogo) {
   return sets1 > sets2 ? jogo.event_first_player : jogo.event_second_player;
 }
 
+function matchJogador(nomeApi, nomeAposta) {
+  const api = normalizarNome(nomeApi).split(" ");
+  const aposta = normalizarNome(nomeAposta).split(" ");
+
+  if (!api.length || !aposta.length || !api[0] || !aposta[0]) {
+    return false;
+  }
+
+  const sobrenomeApi = api[api.length - 1];
+  const sobrenomeAposta = aposta[aposta.length - 1];
+
+  const inicialApi = api[0][0];
+  const inicialAposta = aposta[0][0];
+
+  return (
+    sobrenomeApi === sobrenomeAposta &&
+    inicialApi === inicialAposta
+  );
+}
+
 app.get("/", (req, res) => {
   res.json({ status: "BeTennis API rodando 🚀" });
 });
@@ -235,15 +255,17 @@ app.get("/validar-apostas", async (req, res) => {
     const atualizadas = [];
 
     for (const aposta of apostas) {
-      if (aposta.resultado === "win" || aposta.resultado === "loss" || aposta.resultado === "void") {
+      if (
+        aposta.resultado === "win" ||
+        aposta.resultado === "loss" ||
+        aposta.resultado === "void"
+      ) {
         continue;
       }
 
       const jogo = jogosApi.find((j) => {
-        const mesmoPlayer1 =
-          normalizarNome(j.event_first_player) === normalizarNome(aposta.player1);
-        const mesmoPlayer2 =
-          normalizarNome(j.event_second_player) === normalizarNome(aposta.player2);
+        const mesmoPlayer1 = matchJogador(j.event_first_player, aposta.player1);
+        const mesmoPlayer2 = matchJogador(j.event_second_player, aposta.player2);
 
         return mesmoPlayer1 && mesmoPlayer2;
       });
@@ -268,7 +290,9 @@ app.get("/validar-apostas", async (req, res) => {
 
       aposta.status = "finalizada";
       aposta.resultado =
-        normalizarNome(aposta.escolha) === normalizarNome(vencedor) ? "win" : "loss";
+        normalizarNome(aposta.escolha) === normalizarNome(vencedor)
+          ? "win"
+          : "loss";
       aposta.updatedAt = new Date().toISOString();
 
       atualizadas.push(aposta);
