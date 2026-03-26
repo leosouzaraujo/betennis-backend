@@ -55,6 +55,40 @@ function normalizarNome(nome) {
     .toLowerCase();
 }
 
+function calcularLucro(aposta) {
+  const stake = Number(aposta?.stake) || 0;
+  const odd = Number(aposta?.odd) || 0;
+  const status = aposta?.status;
+  const resultado = aposta?.resultado;
+
+  if (status !== "finalizada") {
+    return 0;
+  }
+
+  if (resultado === "win") {
+    return Number((stake * (odd - 1)).toFixed(2));
+  }
+
+  if (resultado === "loss") {
+    return Number((-stake).toFixed(2));
+  }
+
+  if (resultado === "void") {
+    return 0;
+  }
+
+  return 0;
+}
+
+function atualizarLucroAposta(aposta) {
+  return {
+    ...aposta,
+    odd: Number(aposta?.odd) || 0,
+    stake: Number(aposta?.stake) || 0,
+    lucro: calcularLucro(aposta),
+  };
+}
+
 function extrairVencedorDoResultado(jogo) {
   const resultado = jogo?.event_final_result;
   if (!resultado) return null;
@@ -108,7 +142,10 @@ app.get("/", (req, res) => {
 
 app.get("/apostas", (req, res) => {
   const apostas = lerApostas();
-  res.json(apostas);
+  const apostasAtualizadas = apostas.map(atualizarLucroAposta);
+
+  salvarApostas(apostasAtualizadas);
+  res.json(apostasAtualizadas);
 });
 
 app.post("/apostas", (req, res) => {
@@ -130,6 +167,8 @@ app.post("/apostas", (req, res) => {
     odd: Number(odd),
     stake: Number(stake),
     status: "pendente",
+    resultado: null,
+    lucro: 0,
     createdAt: new Date().toISOString(),
   };
 
@@ -141,7 +180,7 @@ app.post("/apostas", (req, res) => {
 
 app.put("/apostas/:id", (req, res) => {
   const { id } = req.params;
-  const { status, resultado } = req.body;
+  const { status, resultado, odd, stake, escolha, player1, player2 } = req.body;
 
   const apostas = lerApostas();
   const index = apostas.findIndex((aposta) => aposta.id === id);
@@ -150,8 +189,16 @@ app.put("/apostas/:id", (req, res) => {
     return res.status(404).json({ erro: "Aposta não encontrada" });
   }
 
-  if (status) apostas[index].status = status;
-  if (resultado) apostas[index].resultado = resultado;
+  if (status !== undefined) apostas[index].status = status;
+  if (resultado !== undefined) apostas[index].resultado = resultado;
+  if (odd !== undefined) apostas[index].odd = Number(odd);
+  if (stake !== undefined) apostas[index].stake = Number(stake);
+  if (escolha !== undefined) apostas[index].escolha = escolha;
+  if (player1 !== undefined) apostas[index].player1 = player1;
+  if (player2 !== undefined) apostas[index].player2 = player2;
+
+  apostas[index].lucro = calcularLucro(apostas[index]);
+  apostas[index].updatedAt = new Date().toISOString();
 
   salvarApostas(apostas);
 
@@ -272,6 +319,7 @@ app.get("/validar-apostas", async (req, res) => {
         aposta.resultado === "loss" ||
         aposta.resultado === "void"
       ) {
+        aposta.lucro = calcularLucro(aposta);
         continue;
       }
 
@@ -288,10 +336,12 @@ app.get("/validar-apostas", async (req, res) => {
       });
 
       if (!jogo) {
+        aposta.lucro = calcularLucro(aposta);
         continue;
       }
 
       if (String(jogo.event_status || "").toLowerCase() !== "finished") {
+        aposta.lucro = calcularLucro(aposta);
         continue;
       }
 
@@ -300,6 +350,7 @@ app.get("/validar-apostas", async (req, res) => {
       if (!vencedor) {
         aposta.status = "finalizada";
         aposta.resultado = "void";
+        aposta.lucro = calcularLucro(aposta);
         aposta.updatedAt = new Date().toISOString();
         atualizadas.push(aposta);
         continue;
@@ -310,17 +361,19 @@ app.get("/validar-apostas", async (req, res) => {
         normalizarNome(aposta.escolha) === normalizarNome(vencedor)
           ? "win"
           : "loss";
+      aposta.lucro = calcularLucro(aposta);
       aposta.updatedAt = new Date().toISOString();
 
       atualizadas.push(aposta);
     }
 
-    salvarApostas(apostas);
+    const apostasComLucro = apostas.map(atualizarLucroAposta);
+    salvarApostas(apostasComLucro);
 
     return res.status(200).json({
       mensagem: "Validação concluída",
       atualizadas: atualizadas.length,
-      apostas: atualizadas,
+      apostas: atualizadas.map(atualizarLucroAposta),
     });
   } catch (error) {
     console.error(
