@@ -265,10 +265,15 @@ app.get("/validar-apostas", async (req, res) => {
       }
 
       const jogo = jogosApi.find((j) => {
-        const mesmoPlayer1 = matchJogador(j.event_first_player, aposta.player1);
-        const mesmoPlayer2 = matchJogador(j.event_second_player, aposta.player2);
+        const ordemNormal =
+          matchJogador(j.event_first_player, aposta.player1) &&
+          matchJogador(j.event_second_player, aposta.player2);
 
-        return mesmoPlayer1 && mesmoPlayer2;
+        const ordemInvertida =
+          matchJogador(j.event_first_player, aposta.player2) &&
+          matchJogador(j.event_second_player, aposta.player1);
+
+        return ordemNormal || ordemInvertida;
       });
 
       if (!jogo) {
