@@ -7,9 +7,15 @@
     "odd": 1.8,
     "stake": 100,
     "status": "finalizada",
-    "resultado": "loss",
-    "lucro": -100,
-    "createdAt": "2026-03-26T00:00:00.000Z"
+    "resultado": "win",
+    "lucro": 80,
+    "createdAt": "2026-03-26T00:00:00.000Z",
+    "score": "2 - 1",
+    "winner": "E. Rybakina",
+    "eventId": 12114513,
+    "updatedAt": "2026-04-02T10:07:47.583Z",
+    "tournament": "Miami Open",
+    "market": "match_winner"
   },
   {
     "id": "2",
@@ -19,9 +25,15 @@
     "odd": 1.55,
     "stake": 100,
     "status": "finalizada",
-    "resultado": "loss",
-    "lucro": -100,
-    "createdAt": "2026-03-26T00:00:00.000Z"
+    "resultado": "win",
+    "lucro": 55,
+    "createdAt": "2026-03-26T00:00:00.000Z",
+    "score": "0 - 2",
+    "winner": "J. Lehecka",
+    "eventId": 12114662,
+    "updatedAt": "2026-04-02T10:07:47.585Z",
+    "tournament": "Miami Open",
+    "market": "match_winner"
   },
   {
     "id": "3",
@@ -31,8 +43,37 @@
     "odd": 2.1,
     "stake": 100,
     "status": "finalizada",
+    "resultado": "loss",
+    "lucro": -100,
+    "createdAt": "2026-03-26T00:00:00.000Z",
+    "score": "1 - 2",
+    "winner": "A. Fils",
+    "eventId": 12114815,
+    "updatedAt": "2026-04-02T10:07:47.585Z",
+    "tournament": "Miami Open",
+    "market": "match_winner"
+  },
+  {
+    "id": "pred_1775120719750_q6rzv6",
+    "eventId": "teste_001",
+    "player1": "Carlos Alcaraz",
+    "player2": "Jannik Sinner",
+    "escolha": "Carlos Alcaraz",
+    "odd": 2.15,
+    "stake": 100,
+    "market": "match_winner",
+    "tournament": "Miami Open",
+    "surface": "hard",
+    "probModelo": 0.53,
+    "probImplicita": 0.4651,
+    "edge": 0.0649,
+    "modeloVersao": "v1.0.0",
+    "status": "finalizada",
     "resultado": "win",
-    "lucro": 110,
-    "createdAt": "2026-03-26T00:00:00.000Z"
+    "winner": "Carlos Alcaraz",
+    "score": "2-1",
+    "lucro": 115,
+    "createdAt": "2026-04-02T09:05:19.749Z",
+    "updatedAt": "2026-04-02T09:58:22.132Z"
   }
 ]

@@ -1,0 +1,16 @@
+POST http://localhost:3000/apostas
+Content-Type: application/json
+
+{
+  "eventId": "teste_001",
+  "player1": "Carlos Alcaraz",
+  "player2": "Jannik Sinner",
+  "escolha": "Carlos Alcaraz",
+  "odd": 2.15,
+  "stake": 100,
+  "market": "match_winner",
+  "tournament": "Miami Open",
+  "surface": "hard",
+  "probModelo": 0.53,
+  "modeloVersao": "v1.0.0"
+}
