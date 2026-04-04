@@ -219,7 +219,6 @@ function mapearStatusPartida(jogo) {
     return "cancelled";
   }
 
-  // só considera finished por placar se for placar real
   if (
     finalResult &&
     finalResult !== "-" &&
@@ -407,22 +406,120 @@ function definirRiskLevel(confidence, ev) {
   return "high";
 }
 
-function gerarOddsFake() {
-  const base = 1.7 + Math.random() * 0.6;
+// ==========================
+// ODDS / PROBABILIDADES
+// ==========================
+
+// fallback estável para não variar aleatoriamente entre refreshes
+function gerarOddsBaseadasNoRankingVisual(player1, player2) {
+  const chave = `${normalizarNome(player1)}-${normalizarNome(player2)}`;
+  let soma = 0;
+
+  for (let i = 0; i < chave.length; i++) {
+    soma += chave.charCodeAt(i);
+  }
+
+  const variacao = (soma % 26) / 100; // 0.00 até 0.25
+  const odd1 = Number((1.72 + variacao).toFixed(2));
+  const odd2 = Number((2.02 - variacao).toFixed(2));
+
+  const odd1Final = Math.max(1.45, Math.min(2.3, odd1));
+  const odd2Final = Math.max(1.45, Math.min(2.3, odd2));
+
   return {
-    player1: Number(base.toFixed(2)),
-    player2: Number((3 - base).toFixed(2)),
-    source: "mock",
+    player1: Number(odd1Final.toFixed(2)),
+    player2: Number(odd2Final.toFixed(2)),
+    source: "fallback-stable",
     updatedAt: new Date().toISOString(),
   };
 }
 
-function gerarProbabilidadeFake() {
-  const prob1 = 0.45 + Math.random() * 0.1;
+function normalizarProbabilidadesSemVig(prob1, prob2) {
+  const p1 = Number(prob1);
+  const p2 = Number(prob2);
+
+  if (!Number.isFinite(p1) || !Number.isFinite(p2) || p1 <= 0 || p2 <= 0) {
+    return {
+      probabilityPlayer1: null,
+      probabilityPlayer2: null,
+      overround: null,
+    };
+  }
+
+  const soma = p1 + p2;
+
+  if (!Number.isFinite(soma) || soma <= 0) {
+    return {
+      probabilityPlayer1: null,
+      probabilityPlayer2: null,
+      overround: null,
+    };
+  }
+
   return {
-    probabilityPlayer1: Number(prob1.toFixed(3)),
-    probabilityPlayer2: Number((1 - prob1).toFixed(3)),
-    source: "model-v1",
+    probabilityPlayer1: arredondar(p1 / soma, 4),
+    probabilityPlayer2: arredondar(p2 / soma, 4),
+    overround: arredondar(soma, 4),
+  };
+}
+
+function gerarModeloAPartirDasOdds(odds) {
+  const probImp1 = calcularProbImplicita(odds?.player1);
+  const probImp2 = calcularProbImplicita(odds?.player2);
+
+  const normalizado = normalizarProbabilidadesSemVig(probImp1, probImp2);
+
+  return {
+    probabilityPlayer1: normalizado.probabilityPlayer1,
+    probabilityPlayer2: normalizado.probabilityPlayer2,
+    overround: normalizado.overround,
+    source: odds?.source === "real" ? "market-derived-real" : "market-derived",
+  };
+}
+
+function gerarAnaliseEV(odds, model, confidence) {
+  const ev1 = calcularEV(model?.probabilityPlayer1, odds?.player1);
+  const ev2 = calcularEV(model?.probabilityPlayer2, odds?.player2);
+
+  let bestSide = null;
+  let bestEV = null;
+
+  if (ev1 != null && ev2 != null) {
+    if (ev1 >= ev2) {
+      bestSide = "player1";
+      bestEV = ev1;
+    } else {
+      bestSide = "player2";
+      bestEV = ev2;
+    }
+  } else if (ev1 != null) {
+    bestSide = "player1";
+    bestEV = ev1;
+  } else if (ev2 != null) {
+    bestSide = "player2";
+    bestEV = ev2;
+  }
+
+  const classificacao = classificarApostaPorEV(bestEV);
+
+  let recommendation = "No Bet";
+  if (classificacao.apostar && bestSide === "player1") {
+    recommendation = "Apostar Player 1";
+  }
+  if (classificacao.apostar && bestSide === "player2") {
+    recommendation = "Apostar Player 2";
+  }
+
+  return {
+    player1: ev1,
+    player2: ev2,
+    bestSide,
+    bestEV,
+    recommendation,
+    noBetZone: !classificacao.apostar,
+    label: classificacao.label,
+    faixa: classificacao.faixa,
+    riskLevel: definirRiskLevel(confidence, bestEV),
   };
 }
 
@@ -463,6 +560,20 @@ app.get("/normalizar-apostas", (_req, res) => {
         mudou = true;
       }
 
+      if (aposta.probImplicita === undefined) {
+        aposta.probImplicita =
+          Number(aposta?.odd) > 0 ? Number((1 / Number(aposta.odd)).toFixed(4)) : null;
+        mudou = true;
+      }
+
+      if (aposta.edge === undefined) {
+        aposta.edge =
+          aposta.probModelo != null && aposta.probImplicita != null
+            ? Number((Number(aposta.probModelo) - Number(aposta.probImplicita)).toFixed(4))
+            : null;
+        mudou = true;
+      }
+
       if (mudou) atualizadas++;
 
       return aposta;
@@ -484,6 +595,8 @@ app.get("/normalizar-apostas", (_req, res) => {
         id: a.id,
         tournament: a.tournament,
         surface: a.surface,
+        probImplicita: a.probImplicita,
+        edge: a.edge,
       })),
     });
   } catch (error) {
@@ -507,7 +620,7 @@ app.post("/apostas", (req, res) => {
     tournament = null,
     surface = null,
     probModelo = null,
-    modeloVersao = "v1.0.0",
+    modeloVersao = "v1.1.0",
   } = req.body;
 
   if (!player1 || !player2 || !escolha || !odd || !stake) {
@@ -686,28 +799,19 @@ app.get("/partidas-hoje", async (_req, res) => {
 
       if (!player1 || !player2) continue;
 
-      const odds = gerarOddsFake();
-      const model = gerarProbabilidadeFake();
+      const confidence = calcularConfiancaBase(jogo);
 
-      const ev1 = calcularEV(model.probabilityPlayer1, odds.player1);
-      const ev2 = calcularEV(model.probabilityPlayer2, odds.player2);
+      // por enquanto usamos odds estáveis e derivamos o modelo delas
+      // assim eliminamos probabilidade aleatória
+      const odds = gerarOddsBaseadasNoRankingVisual(player1, player2);
+      const modelBase = gerarModeloAPartirDasOdds(odds);
 
-      let bestSide = null;
-      let bestEV = null;
-      let recommendation = "No Bet";
-      let noBetZone = true;
+      const model = {
+        ...modelBase,
+        confidence,
+      };
 
-      if (ev1 != null && ev1 > 0.05) {
-        bestSide = "player1";
-        bestEV = ev1;
-        recommendation = "Apostar Player 1";
-        noBetZone = false;
-      } else if (ev2 != null && ev2 > 0.05) {
-        bestSide = "player2";
-        bestEV = ev2;
-        recommendation = "Apostar Player 2";
-        noBetZone = false;
-      }
+      const ev = gerarAnaliseEV(odds, model, confidence);
 
       const partida = {
         id: String(
@@ -728,23 +832,13 @@ app.get("/partidas-hoje", async (_req, res) => {
           probImplicitaPlayer1: calcularProbImplicita(odds.player1),
           probImplicitaPlayer2: calcularProbImplicita(odds.player2),
         },
-        model: {
-          ...model,
-          confidence: calcularConfiancaBase(jogo),
-        },
-        ev: {
-          player1: ev1,
-          player2: ev2,
-          bestSide,
-          bestEV,
-          recommendation,
-          noBetZone,
-          riskLevel: definirRiskLevel(calcularConfiancaBase(jogo), bestEV),
-        },
+        model,
+        ev,
         metadata: {
           apiEventKey: jogo?.event_key || null,
           eventType: jogo?.event_type_type || null,
           tournamentRound: jogo?.event_round || null,
+          overround: modelBase?.overround ?? null,
         },
         timestamp: jogo?.event_time
           ? new Date(`${jogo.event_date} ${jogo.event_time}`).getTime()
