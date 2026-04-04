@@ -57,6 +57,7 @@ function normalizarNome(nome) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\./g, "")
+    .replace(/-/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -410,8 +411,7 @@ function definirRiskLevel(confidence, ev) {
 // ODDS / PROBABILIDADES
 // ==========================
 
-// fallback estável para não variar aleatoriamente entre refreshes
-function gerarOddsBaseadasNoRankingVisual(player1, player2) {
+function gerarOddsFallbackEstavel(player1, player2) {
   const chave = `${normalizarNome(player1)}-${normalizarNome(player2)}`;
   let soma = 0;
 
@@ -419,18 +419,21 @@ function gerarOddsBaseadasNoRankingVisual(player1, player2) {
     soma += chave.charCodeAt(i);
   }
 
-  const variacao = (soma % 26) / 100; // 0.00 até 0.25
+  const variacao = (soma % 26) / 100;
   const odd1 = Number((1.72 + variacao).toFixed(2));
   const odd2 = Number((2.02 - variacao).toFixed(2));
 
-  const odd1Final = Math.max(1.45, Math.min(2.3, odd1));
-  const odd2Final = Math.max(1.45, Math.min(2.3, odd2));
+  const odd1Final = Math.max(1.45, Math.min(7.5, odd1));
+  const odd2Final = Math.max(1.45, Math.min(7.5, odd2));
 
   return {
     player1: Number(odd1Final.toFixed(2)),
     player2: Number(odd2Final.toFixed(2)),
     source: "fallback-stable",
+    bookmaker: null,
     updatedAt: new Date().toISOString(),
+    oddsApiEventId: null,
+    commenceTime: null,
   };
 }
 
@@ -523,6 +526,246 @@ function gerarAnaliseEV(odds, model, confidence) {
   };
 }
 
+function nomesSaoParecidos(nomeA, nomeB) {
+  const a = normalizarNome(nomeA);
+  const b = normalizarNome(nomeB);
+
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const pa = a.split(" ");
+  const pb = b.split(" ");
+
+  const sobrenomeA = pa[pa.length - 1];
+  const sobrenomeB = pb[pb.length - 1];
+
+  const inicialA = pa[0]?.[0] || "";
+  const inicialB = pb[0]?.[0] || "";
+
+  return sobrenomeA === sobrenomeB && inicialA === inicialB;
+}
+
+function extrairNomeTorneioOdds(evento) {
+  return String(
+    evento?.sport_title ||
+      evento?.sport_key ||
+      evento?.description ||
+      ""
+  ).toLowerCase();
+}
+
+function torneiosParecidos(nomeApiTennis, eventoOdds) {
+  const torneioApi = normalizarTexto(nomeApiTennis || "")?.toLowerCase() || "";
+  const torneioOdds = extrairNomeTorneioOdds(eventoOdds);
+
+  if (!torneioApi || !torneioOdds) return true;
+
+  const palavrasFortes = torneioApi
+    .split(" ")
+    .filter((p) => p.length >= 4);
+
+  if (palavrasFortes.length === 0) return true;
+
+  return palavrasFortes.some((p) => torneioOdds.includes(p));
+}
+
+function eventoOddsCombinaComJogo(evento, jogo) {
+  const home = evento?.home_team || "";
+  const away = evento?.away_team || "";
+
+  const p1 = jogo?.event_first_player || "";
+  const p2 = jogo?.event_second_player || "";
+
+  const ordemNormal =
+    nomesSaoParecidos(home, p1) && nomesSaoParecidos(away, p2);
+
+  const ordemInvertida =
+    nomesSaoParecidos(home, p2) && nomesSaoParecidos(away, p1);
+
+  if (!(ordemNormal || ordemInvertida)) return false;
+
+  return torneiosParecidos(jogo?.tournament_name, evento);
+}
+
+function extrairOddsH2HDoBookmaker(bookmaker, player1, player2) {
+  const market = Array.isArray(bookmaker?.markets)
+    ? bookmaker.markets.find((m) => m?.key === "h2h")
+    : null;
+
+  if (!market || !Array.isArray(market.outcomes)) return null;
+
+  const outcomes = market.outcomes;
+
+  const out1 = outcomes.find((o) => nomesSaoParecidos(o?.name, player1));
+  const out2 = outcomes.find((o) => nomesSaoParecidos(o?.name, player2));
+
+  if (!out1 || !out2) return null;
+
+  const price1 = Number(out1.price);
+  const price2 = Number(out2.price);
+
+  if (!Number.isFinite(price1) || !Number.isFinite(price2)) return null;
+  if (price1 <= 1 || price2 <= 1) return null;
+
+  return {
+    player1: Number(price1.toFixed(2)),
+    player2: Number(price2.toFixed(2)),
+    source: "real",
+    bookmaker: bookmaker?.title || bookmaker?.key || null,
+    updatedAt: bookmaker?.last_update || new Date().toISOString(),
+  };
+}
+
+function escolherMelhorOddsDoEvento(evento, player1, player2) {
+  const bookmakers = Array.isArray(evento?.bookmakers) ? evento.bookmakers : [];
+
+  if (bookmakers.length === 0) return null;
+
+  const prioridades = [
+    "betfair",
+    "betfair_ex_uk",
+    "bet365",
+    "pinnacle",
+    "williamhill",
+    "marathonbet",
+  ];
+
+  for (const chave of prioridades) {
+    const bookmaker = bookmakers.find((b) => String(b?.key || "").toLowerCase() === chave);
+    const odds = bookmaker
+      ? extrairOddsH2HDoBookmaker(bookmaker, player1, player2)
+      : null;
+
+    if (odds) return odds;
+  }
+
+  for (const bookmaker of bookmakers) {
+    const odds = extrairOddsH2HDoBookmaker(bookmaker, player1, player2);
+    if (odds) return odds;
+  }
+
+  return null;
+}
+
+async function buscarEsportesTennisAtivos() {
+  const apiKey = process.env.ODDS_API_KEY;
+  const baseUrl = process.env.ODDS_API_BASE_URL || "https://api.the-odds-api.com/v4";
+
+  if (!apiKey) return [];
+
+  try {
+    const response = await axios.get(`${baseUrl}/sports`, {
+      params: {
+        apiKey,
+      },
+      timeout: 12000,
+    });
+
+    const esportes = Array.isArray(response.data) ? response.data : [];
+
+    return esportes
+      .filter((item) => {
+        const key = String(item?.key || "").toLowerCase();
+        const active = Boolean(item?.active);
+        return active && key.startsWith("tennis_");
+      })
+      .map((item) => item.key);
+  } catch (error) {
+    console.error(
+      "[ODDS] Erro ao buscar esportes ativos:",
+      error?.response?.data || error?.message
+    );
+    return [];
+  }
+}
+
+async function buscarEventosOddsTennis() {
+  const apiKey = process.env.ODDS_API_KEY;
+  const baseUrl = process.env.ODDS_API_BASE_URL || "https://api.the-odds-api.com/v4";
+
+  if (!apiKey) return [];
+
+  const sportKeys = await buscarEsportesTennisAtivos();
+
+  if (!sportKeys.length) {
+    console.warn("[ODDS] Nenhum sport key de tênis ativo encontrado.");
+    return [];
+  }
+
+  const resultados = await Promise.allSettled(
+    sportKeys.map((sportKey) =>
+      axios.get(`${baseUrl}/sports/${sportKey}/odds`, {
+        params: {
+          apiKey,
+          regions: "eu",
+          markets: "h2h",
+          oddsFormat: "decimal",
+          dateFormat: "iso",
+        },
+        timeout: 12000,
+      })
+    )
+  );
+
+  const eventos = [];
+
+  for (const resultado of resultados) {
+    if (resultado.status === "fulfilled") {
+      const lista = Array.isArray(resultado.value?.data)
+        ? resultado.value.data
+        : [];
+
+      eventos.push(...lista);
+    }
+  }
+
+console.log("[ODDS] sportKeys encontrados:", sportKeys);
+console.log("[ODDS] total eventos odds carregados:", eventos.length);
+
+  return eventos;
+}
+
+async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
+  const player1 = jogo?.event_first_player;
+  const player2 = jogo?.event_second_player;
+  
+  console.log(
+  "[ODDS] sem match para jogo:",
+  jogo?.event_first_player,
+  "vs",
+  jogo?.event_second_player,
+  "| torneio:",
+  jogo?.tournament_name
+);
+
+  if (!player1 || !player2) return null;
+  if (!Array.isArray(cacheEventosOdds) || !cacheEventosOdds.length) return null;
+
+  const evento = cacheEventosOdds.find((ev) => eventoOddsCombinaComJogo(ev, jogo));
+
+  if (!evento) {
+  console.log(
+    "[ODDS] sem match para jogo:",
+    jogo?.event_first_player,
+    "vs",
+    jogo?.event_second_player,
+    "| torneio:",
+    jogo?.tournament_name
+  );
+  return null;
+}
+
+  const odds = escolherMelhorOddsDoEvento(evento, player1, player2);
+
+  if (!odds) return null;
+
+  return {
+    ...odds,
+    oddsApiEventId: evento?.id || null,
+    commenceTime: evento?.commence_time || null,
+  };
+}
+
 // ==========================
 // ROTA BASE
 // ==========================
@@ -569,7 +812,9 @@ app.get("/normalizar-apostas", (_req, res) => {
       if (aposta.edge === undefined) {
         aposta.edge =
           aposta.probModelo != null && aposta.probImplicita != null
-            ? Number((Number(aposta.probModelo) - Number(aposta.probImplicita)).toFixed(4))
+            ? Number(
+                (Number(aposta.probModelo) - Number(aposta.probImplicita)).toFixed(4)
+              )
             : null;
         mudou = true;
       }
@@ -620,7 +865,7 @@ app.post("/apostas", (req, res) => {
     tournament = null,
     surface = null,
     probModelo = null,
-    modeloVersao = "v1.1.0",
+    modeloVersao = "v1.2.0",
   } = req.body;
 
   if (!player1 || !player2 || !escolha || !odd || !stake) {
@@ -787,6 +1032,14 @@ app.get("/partidas-hoje", async (_req, res) => {
       ? response.data.result
       : [];
 
+    // 🔥 BUSCA ODDS REAIS
+    const eventosOdds = await buscarEventosOddsTennis();
+
+    console.log("======================================");
+    console.log("[ODDS] eventosOdds disponíveis:", eventosOdds.length);
+    console.log("[ODDS] jogos recebidos da API tennis:", jogosApi.length);
+    console.log("======================================");
+
     const aoVivo = [];
     const proximos = [];
     const finalizados = [];
@@ -801,9 +1054,31 @@ app.get("/partidas-hoje", async (_req, res) => {
 
       const confidence = calcularConfiancaBase(jogo);
 
-      // por enquanto usamos odds estáveis e derivamos o modelo delas
-      // assim eliminamos probabilidade aleatória
-      const odds = gerarOddsBaseadasNoRankingVisual(player1, player2);
+      // 🔥 TENTA PEGAR ODDS REAIS
+      const oddsReais = await buscarOddsReaisParaJogo(jogo, eventosOdds);
+
+      if (oddsReais) {
+        console.log(
+          "[ODDS] MATCH REAL:",
+          player1,
+          "vs",
+          player2,
+          "| book:",
+          oddsReais.bookmaker
+        );
+      } else {
+        console.log(
+          "[ODDS] FALLBACK:",
+          player1,
+          "vs",
+          player2,
+          "| torneio:",
+          jogo?.tournament_name
+        );
+      }
+
+      const odds = oddsReais || gerarOddsFallbackEstavel(player1, player2);
+
       const modelBase = gerarModeloAPartirDasOdds(odds);
 
       const model = {
@@ -839,6 +1114,10 @@ app.get("/partidas-hoje", async (_req, res) => {
           eventType: jogo?.event_type_type || null,
           tournamentRound: jogo?.event_round || null,
           overround: modelBase?.overround ?? null,
+          oddsSource: odds?.source || null,
+          bookmaker: odds?.bookmaker || null,
+          oddsApiEventId: odds?.oddsApiEventId || null,
+          commenceTimeOdds: odds?.commenceTime || null,
         },
         timestamp: jogo?.event_time
           ? new Date(`${jogo.event_date} ${jogo.event_time}`).getTime()
