@@ -15,7 +15,8 @@
     "eventId": 12114513,
     "updatedAt": "2026-04-02T10:07:47.583Z",
     "tournament": "Miami Open",
-    "market": "match_winner"
+    "market": "match_winner",
+    "surface": null
   },
   {
     "id": "2",
@@ -33,7 +34,8 @@
     "eventId": 12114662,
     "updatedAt": "2026-04-02T10:07:47.585Z",
     "tournament": "Miami Open",
-    "market": "match_winner"
+    "market": "match_winner",
+    "surface": null
   },
   {
     "id": "3",
@@ -51,7 +53,8 @@
     "eventId": 12114815,
     "updatedAt": "2026-04-02T10:07:47.585Z",
     "tournament": "Miami Open",
-    "market": "match_winner"
+    "market": "match_winner",
+    "surface": null
   },
   {
     "id": "pred_1775120719750_q6rzv6",
