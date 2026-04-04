@@ -175,17 +175,30 @@ function extrairSuperficie(jogo) {
 function mapearStatusPartida(jogo) {
   const statusOriginal = String(
     jogo?.event_status || jogo?.status || jogo?.event_live || ""
-  ).toLowerCase();
+  )
+    .trim()
+    .toLowerCase();
 
-  const finalResult = String(jogo?.event_final_result || "").trim();
+  const finalResult = String(jogo?.event_final_result || "")
+    .trim()
+    .toLowerCase();
 
-  if (finalResult) return "finished";
+  const finalStatuses = [
+    "finished",
+    "after ft",
+    "ft",
+    "final",
+    "ended",
+    "completed",
+    "walkover",
+    "wo",
+    "retired",
+    "cancelled",
+    "canceled",
+    "abandoned",
+  ];
 
-  if (
-    statusOriginal.includes("finished") ||
-    statusOriginal.includes("ended") ||
-    statusOriginal.includes("final")
-  ) {
+  if (finalStatuses.includes(statusOriginal)) {
     return "finished";
   }
 
@@ -201,11 +214,19 @@ function mapearStatusPartida(jogo) {
   if (
     statusOriginal.includes("cancel") ||
     statusOriginal.includes("suspend") ||
-    statusOriginal.includes("postpon") ||
-    statusOriginal.includes("walkover") ||
-    statusOriginal.includes("retired")
+    statusOriginal.includes("postpon")
   ) {
     return "cancelled";
+  }
+
+  // só considera finished por placar se for placar real
+  if (
+    finalResult &&
+    finalResult !== "-" &&
+    finalResult !== "0 - 0" &&
+    finalResult !== "0-0"
+  ) {
+    return "finished";
   }
 
   return "scheduled";
