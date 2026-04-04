@@ -634,19 +634,17 @@ app.get("/partidas-hoje", async (_req, res) => {
       });
     }
 
-    const hoje = new Date();
-    const amanha = new Date();
-    amanha.setDate(hoje.getDate() + 1);
-
-    const dataHoje = formatarData(hoje);
-    const dataAmanha = formatarData(amanha);
+    const hoje = formatarData(new Date());
+    const amanhaDate = new Date();
+    amanhaDate.setDate(amanhaDate.getDate() + 1);
+    const amanha = formatarData(amanhaDate);
 
     const response = await axios.get("https://api.api-tennis.com/tennis/", {
       params: {
         method: "get_fixtures",
         APIkey: apiKey,
-        date_start: dataHoje,
-        date_stop: dataAmanha,
+        date_start: hoje,
+        date_stop: amanha,
       },
       timeout: 20000,
     });
@@ -655,104 +653,108 @@ app.get("/partidas-hoje", async (_req, res) => {
       ? response.data.result
       : [];
 
-    const partidas = jogosApi.map((jogo) => {
-      const player1 = jogo?.event_first_player || null;
-      const player2 = jogo?.event_second_player || null;
-      const tournament = jogo?.tournament_name || null;
-      const surface = extrairSuperficie(jogo);
+    const aoVivo = [];
+    const proximos = [];
+    const finalizados = [];
+
+    for (const jogo of jogosApi) {
       const status = mapearStatusPartida(jogo);
 
-      const rawId =
-        jogo?.event_key ||
-        jogo?.event_id ||
-        `${player1 || "p1"}-${player2 || "p2"}-${jogo?.event_date || dataHoje}`;
+      const player1 = jogo?.event_first_player || null;
+      const player2 = jogo?.event_second_player || null;
 
-      const oddPlayer1 = null;
-      const oddPlayer2 = null;
+      if (!player1 || !player2) continue;
 
-      const probImplicitaPlayer1 = calcularProbImplicita(oddPlayer1);
-      const probImplicitaPlayer2 = calcularProbImplicita(oddPlayer2);
+      // 🔥 ODDS + MODEL
+      const odds = gerarOddsFake();
+      const model = gerarProbabilidadeFake();
 
-      const modelo = estimarProbabilidadeModeloPlaceholder(jogo);
+      const ev1 = calcularEV(model.probabilityPlayer1, odds.player1);
+      const ev2 = calcularEV(model.probabilityPlayer2, odds.player2);
 
-      const evPlayer1 = calcularEV(modelo.probabilityPlayer1, oddPlayer1);
-      const evPlayer2 = calcularEV(modelo.probabilityPlayer2, oddPlayer2);
-
-      const classeP1 = classificarApostaPorEV(evPlayer1);
-      const classeP2 = classificarApostaPorEV(evPlayer2);
-
-      let melhorLado = null;
-      let melhorEV = null;
-      let recomendacao = "Sem dados";
+      let bestSide = null;
+      let bestEV = null;
+      let recommendation = "No Bet";
       let noBetZone = true;
 
-      if (evPlayer1 != null || evPlayer2 != null) {
-        if ((evPlayer1 ?? -999) >= (evPlayer2 ?? -999)) {
-          melhorLado = "player1";
-          melhorEV = evPlayer1;
-          recomendacao = classeP1.label;
-          noBetZone = !classeP1.apostar;
-        } else {
-          melhorLado = "player2";
-          melhorEV = evPlayer2;
-          recomendacao = classeP2.label;
-          noBetZone = !classeP2.apostar;
-        }
+      if (ev1 != null && ev1 > 0.05) {
+        bestSide = "player1";
+        bestEV = ev1;
+        recommendation = "Apostar Player 1";
+        noBetZone = false;
+      } else if (ev2 != null && ev2 > 0.05) {
+        bestSide = "player2";
+        bestEV = ev2;
+        recommendation = "Apostar Player 2";
+        noBetZone = false;
       }
 
-      const confidence = calcularConfiancaBase(jogo);
-      const riskLevel = definirRiskLevel(confidence, melhorEV);
+      const partida = {
+        id:
+          jogo?.event_key ||
+          `${player1}-${player2}-${jogo.event_date}`,
 
-      return {
-        id: String(rawId),
         player1,
         player2,
-        tournament,
-        surface,
-        date: jogo?.event_date || dataHoje,
-        time: jogo?.event_time || null,
+        tournament: jogo?.tournament_name || null,
+        surface: extrairSuperficie(jogo),
+
+        date: jogo?.event_date,
+        time: jogo?.event_time,
         status,
         score: jogo?.event_final_result || null,
-        odds: {
-          player1: oddPlayer1,
-          player2: oddPlayer2,
-          source: null,
-          updatedAt: null,
-        },
-        market: {
-          probImplicitaPlayer1,
-          probImplicitaPlayer2,
-        },
+
+        odds,
+
         model: {
-          probabilityPlayer1: modelo.probabilityPlayer1,
-          probabilityPlayer2: modelo.probabilityPlayer2,
-          source: modelo.source,
-          confidence,
+          ...model,
+          confidence: calcularConfiancaBase(jogo),
         },
+
         ev: {
-          player1: evPlayer1,
-          player2: evPlayer2,
-          bestSide: melhorLado,
-          bestEV: melhorEV,
-          recommendation: recomendacao,
+          player1: ev1,
+          player2: ev2,
+          bestSide,
+          bestEV,
+          recommendation,
           noBetZone,
-          riskLevel,
-        },
-        metadata: {
-          apiEventKey: jogo?.event_key || null,
-          eventType: jogo?.event_type_type || null,
-          tournamentRound: jogo?.event_round || null,
+          riskLevel:
+            bestEV && bestEV > 0.1 ? "high" : "medium",
         },
       };
+
+      // ======================
+      // CLASSIFICAÇÃO
+      // ======================
+
+      if (status === "live") {
+        aoVivo.push(partida);
+        continue;
+      }
+
+      if (status === "scheduled") {
+        proximos.push(partida);
+        continue;
+      }
+
+      if (status === "finished") {
+        finalizados.push(partida);
+        continue;
+      }
+    }
+
+    return res.status(200).json({
+      resumo: {
+        total: jogosApi.length,
+        aoVivo: aoVivo.length,
+        proximos: proximos.length,
+        finalizados: finalizados.length,
+      },
+      aoVivo,
+      proximos,
+      finalizados,
     });
 
-    partidas.sort((a, b) => {
-      const dataA = `${a.date || ""} ${a.time || "23:59"}`;
-      const dataB = `${b.date || ""} ${b.time || "23:59"}`;
-      return dataA.localeCompare(dataB);
-    });
-
-    return res.status(200).json(partidas);
   } catch (error) {
     console.error(
       "Erro em /partidas-hoje:",
@@ -760,9 +762,74 @@ app.get("/partidas-hoje", async (_req, res) => {
     );
 
     return res.status(500).json({
-      erro: "Falha ao buscar partidas do dia",
+      erro: "Falha ao buscar partidas",
       detalhe: error?.response?.data || error?.message,
-      partidas: [],
+    });
+  }
+});
+
+      // ======================
+      // CLASSIFICAÇÃO
+      // ======================
+
+      if (status === "live") {
+        aoVivo.push({
+          ...partidaBase,
+          priority: 1,
+        });
+        continue;
+      }
+
+      if (status === "scheduled") {
+        // ignora jogos passados com status bugado
+        if (dataHoraJogo < agora) continue;
+
+        proximos.push({
+          ...partidaBase,
+          priority: 2,
+          timestamp: dataHoraJogo.getTime(),
+        });
+        continue;
+      }
+
+      if (status === "finished") {
+        finalizados.push({
+          ...partidaBase,
+          priority: 3,
+        });
+        continue;
+      }
+    }
+
+    // ======================
+    // ORDENAÇÃO PROFISSIONAL
+    // ======================
+
+    proximos.sort((a, b) => a.timestamp - b.timestamp);
+
+    // ao vivo não precisa ordenar muito, mas podemos priorizar por torneio depois
+
+    return res.status(200).json({
+      resumo: {
+        total: jogosApi.length,
+        aoVivo: aoVivo.length,
+        proximos: proximos.length,
+        finalizados: finalizados.length,
+      },
+      aoVivo,
+      proximos,
+      finalizados,
+    });
+
+  } catch (error) {
+    console.error(
+      "Erro em /partidas-hoje:",
+      error?.response?.data || error?.message
+    );
+
+    return res.status(500).json({
+      erro: "Falha ao buscar partidas",
+      detalhe: error?.response?.data || error?.message,
     });
   }
 });
