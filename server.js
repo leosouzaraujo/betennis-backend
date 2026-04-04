@@ -773,30 +773,22 @@ app.get("/partidas-hoje", async (_req, res) => {
       // ======================
 
       if (status === "live") {
-        aoVivo.push({
-          ...partidaBase,
-          priority: 1,
-        });
+        aoVivo.push(partida);
         continue;
       }
 
       if (status === "scheduled") {
-        // ignora jogos passados com status bugado
-        if (dataHoraJogo < agora) continue;
-
         proximos.push({
-          ...partidaBase,
-          priority: 2,
-          timestamp: dataHoraJogo.getTime(),
+          ...partida,
+          timestamp: jogo?.event_time
+            ? new Date(`${jogo.event_date} ${jogo.event_time}`).getTime()
+            : 0,
         });
         continue;
       }
 
       if (status === "finished") {
-        finalizados.push({
-          ...partidaBase,
-          priority: 3,
-        });
+        finalizados.push(partida);
         continue;
       }
     }
@@ -805,9 +797,11 @@ app.get("/partidas-hoje", async (_req, res) => {
     // ORDENAÇÃO PROFISSIONAL
     // ======================
 
-    proximos.sort((a, b) => a.timestamp - b.timestamp);
-
-    // ao vivo não precisa ordenar muito, mas podemos priorizar por torneio depois
+    proximos.sort((a, b) => {
+      const t1 = a?.timestamp || 0;
+      const t2 = b?.timestamp || 0;
+      return t1 - t2;
+    });
 
     return res.status(200).json({
       resumo: {
@@ -820,7 +814,6 @@ app.get("/partidas-hoje", async (_req, res) => {
       proximos,
       finalizados,
     });
-
   } catch (error) {
     console.error(
       "Erro em /partidas-hoje:",
@@ -834,6 +827,43 @@ app.get("/partidas-hoje", async (_req, res) => {
   }
 });
 
+// ======================
+// ORDENAÇÃO PROFISSIONAL
+// ======================
+
+// (opcional) só ordenar se tiver timestamp definido
+proximos.sort((a, b) => {
+  const t1 = a?.timestamp || 0;
+  const t2 = b?.timestamp || 0;
+  return t1 - t2;
+});
+
+// ao vivo não precisa ordenar muito, mas pode evoluir depois
+
+return res.status(200).json({
+  resumo: {
+    total: jogosApi.length,
+    aoVivo: aoVivo.length,
+    proximos: proximos.length,
+    finalizados: finalizados.length,
+  },
+  aoVivo,
+  proximos,
+  finalizados,
+});
+
+} catch (error) {
+  console.error(
+    "Erro em /partidas-hoje:",
+    error?.response?.data || error?.message
+  );
+
+  return res.status(500).json({
+    erro: "Falha ao buscar partidas",
+    detalhe: error?.response?.data || error?.message,
+  });
+}
+});
 // ==========================
 // VALIDAR APOSTAS
 // ==========================
