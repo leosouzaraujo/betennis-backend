@@ -386,22 +386,22 @@ function definirRiskLevel(confidence, ev) {
   return "high";
 }
 
-function estimarProbabilidadeModeloPlaceholder(jogo) {
-  const player1 = jogo?.event_first_player || "";
-  const player2 = jogo?.event_second_player || "";
-
-  if (!player1 || !player2) {
-    return {
-      probabilityPlayer1: null,
-      probabilityPlayer2: null,
-      source: "placeholder",
-    };
-  }
-
+function gerarOddsFake() {
+  const base = 1.7 + Math.random() * 0.6;
   return {
-    probabilityPlayer1: 0.5,
-    probabilityPlayer2: 0.5,
-    source: "placeholder",
+    player1: Number(base.toFixed(2)),
+    player2: Number((3 - base).toFixed(2)),
+    source: "mock",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function gerarProbabilidadeFake() {
+  const prob1 = 0.45 + Math.random() * 0.1;
+  return {
+    probabilityPlayer1: Number(prob1.toFixed(3)),
+    probabilityPlayer2: Number((1 - prob1).toFixed(3)),
+    source: "model-v1",
   };
 }
 
@@ -665,7 +665,6 @@ app.get("/partidas-hoje", async (_req, res) => {
 
       if (!player1 || !player2) continue;
 
-      // 🔥 ODDS + MODEL
       const odds = gerarOddsFake();
       const model = gerarProbabilidadeFake();
 
@@ -690,27 +689,28 @@ app.get("/partidas-hoje", async (_req, res) => {
       }
 
       const partida = {
-        id:
+        id: String(
           jogo?.event_key ||
-          `${player1}-${player2}-${jogo.event_date}`,
-
+            jogo?.event_id ||
+            `${player1}-${player2}-${jogo?.event_date || hoje}`
+        ),
         player1,
         player2,
         tournament: jogo?.tournament_name || null,
         surface: extrairSuperficie(jogo),
-
-        date: jogo?.event_date,
-        time: jogo?.event_time,
+        date: jogo?.event_date || hoje,
+        time: jogo?.event_time || null,
         status,
         score: jogo?.event_final_result || null,
-
         odds,
-
+        market: {
+          probImplicitaPlayer1: calcularProbImplicita(odds.player1),
+          probImplicitaPlayer2: calcularProbImplicita(odds.player2),
+        },
         model: {
           ...model,
           confidence: calcularConfiancaBase(jogo),
         },
-
         ev: {
           player1: ev1,
           player2: ev2,
@@ -718,14 +718,17 @@ app.get("/partidas-hoje", async (_req, res) => {
           bestEV,
           recommendation,
           noBetZone,
-          riskLevel:
-            bestEV && bestEV > 0.1 ? "high" : "medium",
+          riskLevel: definirRiskLevel(calcularConfiancaBase(jogo), bestEV),
         },
+        metadata: {
+          apiEventKey: jogo?.event_key || null,
+          eventType: jogo?.event_type_type || null,
+          tournamentRound: jogo?.event_round || null,
+        },
+        timestamp: jogo?.event_time
+          ? new Date(`${jogo.event_date} ${jogo.event_time}`).getTime()
+          : 0,
       };
-
-      // ======================
-      // CLASSIFICAÇÃO
-      // ======================
 
       if (status === "live") {
         aoVivo.push(partida);
@@ -743,61 +746,13 @@ app.get("/partidas-hoje", async (_req, res) => {
       }
     }
 
-    return res.status(200).json({
-      resumo: {
-        total: jogosApi.length,
-        aoVivo: aoVivo.length,
-        proximos: proximos.length,
-        finalizados: finalizados.length,
-      },
-      aoVivo,
-      proximos,
-      finalizados,
-    });
-
-  } catch (error) {
-    console.error(
-      "Erro em /partidas-hoje:",
-      error?.response?.data || error?.message
-    );
-
-    return res.status(500).json({
-      erro: "Falha ao buscar partidas",
-      detalhe: error?.response?.data || error?.message,
-    });
-  }
-});
-
-      // ======================
-      // CLASSIFICAÇÃO
-      // ======================
-
-      if (status === "live") {
-        aoVivo.push(partida);
-        continue;
-      }
-
-      if (status === "scheduled") {
-        proximos.push({
-          ...partida,
-          timestamp: jogo?.event_time
-            ? new Date(`${jogo.event_date} ${jogo.event_time}`).getTime()
-            : 0,
-        });
-        continue;
-      }
-
-      if (status === "finished") {
-        finalizados.push(partida);
-        continue;
-      }
-    }
-
-    // ======================
-    // ORDENAÇÃO PROFISSIONAL
-    // ======================
-
     proximos.sort((a, b) => {
+      const t1 = a?.timestamp || 0;
+      const t2 = b?.timestamp || 0;
+      return t1 - t2;
+    });
+
+    finalizados.sort((a, b) => {
       const t1 = a?.timestamp || 0;
       const t2 = b?.timestamp || 0;
       return t1 - t2;
@@ -827,43 +782,6 @@ app.get("/partidas-hoje", async (_req, res) => {
   }
 });
 
-// ======================
-// ORDENAÇÃO PROFISSIONAL
-// ======================
-
-// (opcional) só ordenar se tiver timestamp definido
-proximos.sort((a, b) => {
-  const t1 = a?.timestamp || 0;
-  const t2 = b?.timestamp || 0;
-  return t1 - t2;
-});
-
-// ao vivo não precisa ordenar muito, mas pode evoluir depois
-
-return res.status(200).json({
-  resumo: {
-    total: jogosApi.length,
-    aoVivo: aoVivo.length,
-    proximos: proximos.length,
-    finalizados: finalizados.length,
-  },
-  aoVivo,
-  proximos,
-  finalizados,
-});
-
-} catch (error) {
-  console.error(
-    "Erro em /partidas-hoje:",
-    error?.response?.data || error?.message
-  );
-
-  return res.status(500).json({
-    erro: "Falha ao buscar partidas",
-    detalhe: error?.response?.data || error?.message,
-  });
-}
-});
 // ==========================
 // VALIDAR APOSTAS
 // ==========================
