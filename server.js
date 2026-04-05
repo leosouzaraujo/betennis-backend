@@ -758,11 +758,11 @@ async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
 
   let score = 0;
 
-  if (home.includes(p1)) score += 2;
-  if (away.includes(p2)) score += 2;
+if (nomesSaoParecidos(home, p1)) score += 2;
+if (nomesSaoParecidos(away, p2)) score += 2;
 
-  if (home.includes(p2)) score += 2;
-  if (away.includes(p1)) score += 2;
+if (nomesSaoParecidos(home, p2)) score += 2;
+if (nomesSaoParecidos(away, p1)) score += 2;
 
   const sobrenome1 = (p1 || "").split(" ").pop();
   const sobrenome2 = (p2 || "").split(" ").pop();
