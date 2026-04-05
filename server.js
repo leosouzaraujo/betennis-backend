@@ -697,7 +697,12 @@ async function buscarEventosOddsTennis() {
 
   if (!apiKey) return [];
 
-  const sportKeys = await buscarEsportesTennisAtivos();
+  const sportKeys = [
+  "tennis_atp_monte_carlo_masters",
+  "tennis_wta_charleston_open"
+];
+
+  console.log("[ODDS] sportKeys encontrados:", sportKeys);
 
   if (!sportKeys.length) {
     console.warn("[ODDS] Nenhum sport key de tênis ativo encontrado.");
@@ -705,36 +710,28 @@ async function buscarEventosOddsTennis() {
   }
 
   const resultados = await Promise.allSettled(
-    sportKeys.map((sportKey) =>
-      axios.get(`${baseUrl}/sports/${sportKey}/odds`, {
-        params: {
-          apiKey,
-          regions: "eu",
-          markets: "h2h",
-          oddsFormat: "decimal",
-          dateFormat: "iso",
-        },
-        timeout: 12000,
-      })
-    )
-  );
+  sportKeys.map((sportKey) =>
+    axios.get(`${baseUrl}/sports/${sportKey}/odds`, {
+      params: {
+        apiKey,
+        regions: "eu,us,uk",
+        markets: "h2h",
+        oddsFormat: "decimal",
+        dateFormat: "iso",
+      },
+      timeout: 12000,
+    })
+  )
+);
 
-  const eventos = [];
+// 🔥 ADICIONA ISSO!
+const eventos = resultados
+  .filter(r => r.status === "fulfilled")
+  .flatMap(r => r.value.data || []);
 
-  for (const resultado of resultados) {
-    if (resultado.status === "fulfilled") {
-      const lista = Array.isArray(resultado.value?.data)
-        ? resultado.value.data
-        : [];
+console.log("[ODDS] total eventos:", eventos.length);
 
-      eventos.push(...lista);
-    }
-  }
-
-console.log("[ODDS] sportKeys encontrados:", sportKeys);
-console.log("[ODDS] total eventos odds carregados:", eventos.length);
-
-  return eventos;
+return eventos;
 }
 
 async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
