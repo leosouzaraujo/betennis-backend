@@ -750,11 +750,25 @@ async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
   let melhorMatch = null;
   let melhorScore = 0;
 
-  for (const evento of cacheEventosOdds) {
-  const home = normalizarNome(evento?.home_team);
-  const away = normalizarNome(evento?.away_team);
+for (const evento of cacheEventosOdds) {
+  const home = normalizarNome(evento?.home_team || "");
+  const away = normalizarNome(evento?.away_team || "");
 
   if (!home || !away) continue;
+
+  // 🔥 NOVO BLOCO (COLOCA AQUI)
+  const jogoTime = new Date(
+    (jogo?.event_date || "") + " " + (jogo?.event_time || "")
+  ).getTime();
+
+  const eventoTime = new Date(evento?.commence_time || 0).getTime();
+
+  const diffHoras = Math.abs(jogoTime - eventoTime) / (1000 * 60 * 60);
+
+  // 🔥 FILTRO DE TEMPO
+  if (diffHoras > 6) {
+    continue;
+  }
 
   let score = 0;
 
