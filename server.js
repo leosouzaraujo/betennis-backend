@@ -824,6 +824,7 @@ return {
   oddsApiEventId: melhorMatch?.id || null,
   commenceTime: melhorMatch?.commence_time || null,
 };
+} 
 
 // ==========================
 // ROTA BASE
