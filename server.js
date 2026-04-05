@@ -617,28 +617,40 @@ function extrairOddsH2HDoBookmaker(bookmaker, player1, player2) {
 }
 
 function escolherMelhorOddsDoEvento(evento, player1, player2) {
-  const bookmakers = Array.isArray(evento?.bookmakers) ? evento.bookmakers : [];
+  const bookmakers = Array.isArray(evento?.bookmakers)
+    ? evento.bookmakers
+    : [];
 
   if (bookmakers.length === 0) return null;
 
-  const prioridades = [
-    "betfair",
+  // 🔥 PRIORIDADE TOTAL: Betfair Exchange
+  const prioridade = [
+    "betfair_exchange",
     "betfair_ex_uk",
-    "bet365",
+    "betfair",
     "pinnacle",
-    "williamhill",
-    "marathonbet",
+    "bet365",
   ];
 
-  for (const chave of prioridades) {
-    const bookmaker = bookmakers.find((b) => String(b?.key || "").toLowerCase() === chave);
-    const odds = bookmaker
-      ? extrairOddsH2HDoBookmaker(bookmaker, player1, player2)
-      : null;
+  // 1. Tenta pegar Betfair primeiro
+  for (const key of prioridade) {
+    const bookmaker = bookmakers.find(
+      (b) => String(b?.key || "").toLowerCase() === key
+    );
 
-    if (odds) return odds;
+    if (!bookmaker) continue;
+
+    const odds = extrairOddsH2HDoBookmaker(bookmaker, player1, player2);
+
+    if (odds) {
+      return {
+        ...odds,
+        source: key.includes("betfair") ? "betfair-exchange" : "real",
+      };
+    }
   }
 
+  // 2. Fallback: qualquer bookmaker válido
   for (const bookmaker of bookmakers) {
     const odds = extrairOddsH2HDoBookmaker(bookmaker, player1, player2);
     if (odds) return odds;
@@ -728,41 +740,81 @@ console.log("[ODDS] total eventos odds carregados:", eventos.length);
 async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
   const player1 = jogo?.event_first_player;
   const player2 = jogo?.event_second_player;
-  
-  console.log(
-  "[ODDS] sem match para jogo:",
-  jogo?.event_first_player,
-  "vs",
-  jogo?.event_second_player,
-  "| torneio:",
-  jogo?.tournament_name
-);
 
   if (!player1 || !player2) return null;
   if (!Array.isArray(cacheEventosOdds) || !cacheEventosOdds.length) return null;
 
-  const evento = cacheEventosOdds.find((ev) => eventoOddsCombinaComJogo(ev, jogo));
+  const p1 = normalizarNome(player1);
+  const p2 = normalizarNome(player2);
 
-  if (!evento) {
-  console.log(
-    "[ODDS] sem match para jogo:",
-    jogo?.event_first_player,
-    "vs",
-    jogo?.event_second_player,
-    "| torneio:",
-    jogo?.tournament_name
+  let melhorMatch = null;
+  let melhorScore = 0;
+
+  for (const evento of cacheEventosOdds) {
+    const home = normalizarNome(evento?.home_team);
+    const away = normalizarNome(evento?.away_team);
+
+    if (!home || !away) continue;
+
+    let score = 0;
+
+    // Match direto
+    if (home.includes(p1)) score += 2;
+    if (away.includes(p2)) score += 2;
+
+    // Match invertido
+    if (home.includes(p2)) score += 2;
+    if (away.includes(p1)) score += 2;
+
+    // Match por sobrenome (peso menor)
+    const sobrenome1 = p1.split(" ").pop();
+    const sobrenome2 = p2.split(" ").pop();
+
+    if (home.includes(sobrenome1)) score += 1;
+    if (away.includes(sobrenome2)) score += 1;
+
+    if (score > melhorScore) {
+      melhorScore = score;
+      melhorMatch = evento;
+    }
+  }
+
+  // 🔥 Threshold mínimo (evita match errado)
+  if (!melhorMatch || melhorScore < 3) {
+    console.log(
+      "[ODDS] FALLBACK:",
+      player1,
+      "vs",
+      player2,
+      "| score:",
+      melhorScore
+    );
+    return null;
+  }
+
+  const odds = escolherMelhorOddsDoEvento(
+    melhorMatch,
+    player1,
+    player2
   );
-  return null;
-}
-
-  const odds = escolherMelhorOddsDoEvento(evento, player1, player2);
 
   if (!odds) return null;
 
+  console.log(
+    "[ODDS] MATCH REAL:",
+    player1,
+    "vs",
+    player2,
+    "| score:",
+    melhorScore,
+    "| book:",
+    odds.bookmaker
+  );
+
   return {
     ...odds,
-    oddsApiEventId: evento?.id || null,
-    commenceTime: evento?.commence_time || null,
+    oddsApiEventId: melhorMatch?.id || null,
+    commenceTime: melhorMatch?.commence_time || null,
   };
 }
 
@@ -1077,14 +1129,19 @@ app.get("/partidas-hoje", async (_req, res) => {
         );
       }
 
-      const odds = oddsReais || gerarOddsFallbackEstavel(player1, player2);
+      // 🔥 NÃO IGNORA MAIS
+if (!oddsReais) {
+  continue;
+}
 
-      const modelBase = gerarModeloAPartirDasOdds(odds);
+const odds = oddsReais;
 
-      const model = {
-        ...modelBase,
-        confidence,
-      };
+const modelBase = gerarModeloAPartirDasOdds(odds);
+
+const model = {
+  ...modelBase,
+  confidence,
+};
 
       const ev = gerarAnaliseEV(odds, model, confidence);
 
