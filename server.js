@@ -751,61 +751,58 @@ async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
   let melhorScore = 0;
 
   for (const evento of cacheEventosOdds) {
-    const home = normalizarNome(evento?.home_team);
-    const away = normalizarNome(evento?.away_team);
+  const home = normalizarNome(evento?.home_team);
+  const away = normalizarNome(evento?.away_team);
 
-    if (!home || !away) continue;
+  if (!home || !away) continue;
 
-    let score = 0;
+  let score = 0;
 
-    // Match direto
-    if (home.includes(p1)) score += 2;
-    if (away.includes(p2)) score += 2;
+  if (home.includes(p1)) score += 2;
+  if (away.includes(p2)) score += 2;
 
-    // Match invertido
-    if (home.includes(p2)) score += 2;
-    if (away.includes(p1)) score += 2;
+  if (home.includes(p2)) score += 2;
+  if (away.includes(p1)) score += 2;
 
-    // Match por sobrenome (peso menor)
-    const sobrenome1 = p1.split(" ").pop();
-    const sobrenome2 = p2.split(" ").pop();
+  const sobrenome1 = (p1 || "").split(" ").pop();
+  const sobrenome2 = (p2 || "").split(" ").pop();
 
-    if (home.includes(sobrenome1)) score += 1;
-if (away.includes(sobrenome2)) score += 1;
-
-// 🔥 COLOCA O LOG AQUI
-console.log(
-  "[MATCH DEBUG]",
-  player1,
-  "vs",
-  player2,
-  "| tentando:",
-  evento.home_team,
-  "vs",
-  evento.away_team,
-  "| score:",
-  score
-);
-
-if (score > melhorScore) {
-  melhorScore = score;
-  melhorMatch = evento;
-}
-
-  // 🔥 Threshold mínimo (evita match errado)
-  if (!melhorMatch || melhorScore < 2) {
-    console.log(
-      "[ODDS] FALLBACK:",
-      player1,
-      "vs",
-      player2,
-      "| score:",
-      melhorScore
-    );
-    return null;
-  }
+  if (home.includes(sobrenome1)) score += 1;
+  if (away.includes(sobrenome2)) score += 1;
 
   console.log(
+    "[MATCH DEBUG]",
+    player1,
+    "vs",
+    player2,
+    "| tentando:",
+    evento.home_team,
+    "vs",
+    evento.away_team,
+    "| score:",
+    score
+  );
+
+  if (score > melhorScore) {
+    melhorScore = score;
+    melhorMatch = evento;
+  }
+} // 👈 🔥 FECHA O FOR AQUI
+
+// 🔥 AGORA SIM fora do loop
+if (!melhorMatch || melhorScore < 2) {
+  console.log(
+    "[ODDS] FALLBACK:",
+    player1,
+    "vs",
+    player2,
+    "| score:",
+    melhorScore
+  );
+  return null;
+}
+
+console.log(
   "[MATCH FINAL]",
   player1,
   "vs",
@@ -814,31 +811,19 @@ if (score > melhorScore) {
   melhorScore
 );
 
-  const odds = escolherMelhorOddsDoEvento(
-    melhorMatch,
-    player1,
-    player2
-  );
+const odds = escolherMelhorOddsDoEvento(
+  melhorMatch,
+  player1,
+  player2
+);
 
-  if (!odds) return null;
+if (!odds) return null;
 
-  console.log(
-    "[ODDS] MATCH REAL:",
-    player1,
-    "vs",
-    player2,
-    "| score:",
-    melhorScore,
-    "| book:",
-    odds.bookmaker
-  );
-
-  return {
-    ...odds,
-    oddsApiEventId: melhorMatch?.id || null,
-    commenceTime: melhorMatch?.commence_time || null,
-  };
-}
+return {
+  ...odds,
+  oddsApiEventId: melhorMatch?.id || null,
+  commenceTime: melhorMatch?.commence_time || null,
+};
 
 // ==========================
 // ROTA BASE
