@@ -771,13 +771,26 @@ async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
     const sobrenome2 = p2.split(" ").pop();
 
     if (home.includes(sobrenome1)) score += 1;
-    if (away.includes(sobrenome2)) score += 1;
+if (away.includes(sobrenome2)) score += 1;
 
-    if (score > melhorScore) {
-      melhorScore = score;
-      melhorMatch = evento;
-    }
-  }
+// 🔥 COLOCA O LOG AQUI
+console.log(
+  "[MATCH DEBUG]",
+  player1,
+  "vs",
+  player2,
+  "| tentando:",
+  evento.home_team,
+  "vs",
+  evento.away_team,
+  "| score:",
+  score
+);
+
+if (score > melhorScore) {
+  melhorScore = score;
+  melhorMatch = evento;
+}
 
   // 🔥 Threshold mínimo (evita match errado)
   if (!melhorMatch || melhorScore < 2) {
@@ -791,6 +804,15 @@ async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
     );
     return null;
   }
+
+  console.log(
+  "[MATCH FINAL]",
+  player1,
+  "vs",
+  player2,
+  "| melhorScore:",
+  melhorScore
+);
 
   const odds = escolherMelhorOddsDoEvento(
     melhorMatch,
