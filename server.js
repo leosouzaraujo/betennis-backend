@@ -780,7 +780,7 @@ async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
   }
 
   // 🔥 Threshold mínimo (evita match errado)
-  if (!melhorMatch || melhorScore < 3) {
+  if (!melhorMatch || melhorScore < 2) {
     console.log(
       "[ODDS] FALLBACK:",
       player1,
