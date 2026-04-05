@@ -790,7 +790,7 @@ async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
 } // 👈 🔥 FECHA O FOR AQUI
 
 // 🔥 AGORA SIM fora do loop
-if (!melhorMatch || melhorScore < 2) {
+if (!melhorMatch || melhorScore < 1) {
   console.log(
     "[ODDS] FALLBACK:",
     player1,
