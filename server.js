@@ -1105,14 +1105,29 @@ app.get("/partidas-hoje", async (_req, res) => {
     const finalizados = [];
 
     for (const jogo of jogosApi) {
-      const status = mapearStatusPartida(jogo);
+  const status = mapearStatusPartida(jogo);
 
-      const player1 = jogo?.event_first_player || null;
-      const player2 = jogo?.event_second_player || null;
+  const player1 = jogo?.event_first_player || null;
+  const player2 = jogo?.event_second_player || null;
 
-      if (!player1 || !player2) continue;
+  if (!player1 || !player2) continue;
 
-      const confidence = calcularConfiancaBase(jogo);
+  // 🔥 FILTRO AQUI
+  const torneio = (jogo?.tournament_name || "").toLowerCase();
+
+  if (
+    torneio.includes("m15") ||
+    torneio.includes("m25") ||
+    torneio.includes("itf") ||
+    torneio.includes("w15") ||
+    torneio.includes("w25") ||
+    torneio.includes("monastir") ||
+    torneio.includes("campinas")
+  ) {
+    continue;
+  }
+
+  const confidence = calcularConfiancaBase(jogo);
 
       // 🔥 TENTA PEGAR ODDS REAIS
       const oddsReais = await buscarOddsReaisParaJogo(jogo, eventosOdds);
