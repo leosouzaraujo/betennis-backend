@@ -1079,123 +1079,56 @@ app.delete("/apostas/:id", (req, res) => {
 
 app.get("/partidas-hoje", async (_req, res) => {
   try {
-    const apiKey = process.env.API_TENNIS_KEY;
+    const eventos = await buscarEventosOddsTennis();
 
-    if (!apiKey) {
-      return res.status(500).json({
-        erro: "API_TENNIS_KEY não configurada",
-      });
-    }
+    console.log("[ODDS] total eventos:", eventos.length);
 
-    const hoje = formatarData(new Date());
-    const amanhaDate = new Date();
-    amanhaDate.setDate(amanhaDate.getDate() + 1);
-    const amanha = formatarData(amanhaDate);
+    const partidas = [];
 
-    const response = await axios.get("https://api.api-tennis.com/tennis/", {
-      params: {
-        method: "get_fixtures",
-        APIkey: apiKey,
-        date_start: hoje,
-        date_stop: amanha,
-      },
-      timeout: 20000,
-    });
+    for (const evento of eventos) {
+      const player1 = evento?.home_team;
+      const player2 = evento?.away_team;
 
-    const jogosApi = Array.isArray(response.data?.result)
-      ? response.data.result
-      : [];
+      if (!player1 || !player2) continue;
 
-    // 🔥 BUSCA ODDS REAIS
-    const eventosOdds = await buscarEventosOddsTennis();
+      const bookmaker = evento?.bookmakers?.[0];
+      if (!bookmaker) continue;
 
-    console.log("======================================");
-    console.log("[ODDS] eventosOdds disponíveis:", eventosOdds.length);
-    console.log("[ODDS] jogos recebidos da API tennis:", jogosApi.length);
-    console.log("======================================");
+      const market = bookmaker?.markets?.find(m => m.key === "h2h");
+      if (!market) continue;
 
-    const aoVivo = [];
-    const proximos = [];
-    const finalizados = [];
+      const outcome1 = market.outcomes.find(o => o.name === player1);
+      const outcome2 = market.outcomes.find(o => o.name === player2);
 
-    for (const jogo of jogosApi) {
-  const status = mapearStatusPartida(jogo);
+      if (!outcome1 || !outcome2) continue;
 
-  const player1 = jogo?.event_first_player || null;
-  const player2 = jogo?.event_second_player || null;
+      const odds = {
+        player1: Number(outcome1.price),
+        player2: Number(outcome2.price),
+        source: "real",
+        bookmaker: bookmaker.title || bookmaker.key,
+        updatedAt: bookmaker.last_update || new Date().toISOString(),
+      };
 
-  if (!player1 || !player2) continue;
+      const modelBase = gerarModeloAPartirDasOdds(odds);
 
-  // 🔥 FILTRO AQUI
-  const torneio = (jogo?.tournament_name || "").toLowerCase();
+      const model = {
+        ...modelBase,
+        confidence: 70,
+      };
 
-  if (
-    torneio.includes("m15") ||
-    torneio.includes("m25") ||
-    torneio.includes("itf") ||
-    torneio.includes("w15") ||
-    torneio.includes("w25") ||
-    torneio.includes("monastir") ||
-    torneio.includes("campinas")
-  ) {
-    continue;
-  }
+      const ev = gerarAnaliseEV(odds, model, 70);
 
-  const confidence = calcularConfiancaBase(jogo);
-
-      // 🔥 TENTA PEGAR ODDS REAIS
-      const oddsReais = await buscarOddsReaisParaJogo(jogo, eventosOdds);
-
-      if (oddsReais) {
-        console.log(
-          "[ODDS] MATCH REAL:",
-          player1,
-          "vs",
-          player2,
-          "| book:",
-          oddsReais.bookmaker
-        );
-      } else {
-        console.log(
-          "[ODDS] FALLBACK:",
-          player1,
-          "vs",
-          player2,
-          "| torneio:",
-          jogo?.tournament_name
-        );
-      }
-
-      // 🔥 NÃO IGNORA MAIS
-if (!oddsReais) {
-  continue;
-}
-
-const odds = oddsReais;
-
-const modelBase = gerarModeloAPartirDasOdds(odds);
-
-const model = {
-  ...modelBase,
-  confidence,
-};
-
-      const ev = gerarAnaliseEV(odds, model, confidence);
-
-      const partida = {
-        id: String(
-          jogo?.event_key ||
-            jogo?.event_id ||
-            `${player1}-${player2}-${jogo?.event_date || hoje}`
-        ),
+      partidas.push({
+        id: evento.id,
         player1,
         player2,
-        tournament: jogo?.tournament_name || null,
-        surface: extrairSuperficie(jogo),
-        date: jogo?.event_date || hoje,
-        time: jogo?.event_time || null,
-        status,
-        score: jogo?.event_final_result || null,
+        tournament: evento.sport_title,
+        surface: null,
+        date: evento.commence_time,
+        time: null,
+        status: "scheduled",
+        score: null,
         odds,
         market: {
           probImplicitaPlayer1: calcularProbImplicita(odds.player1),
@@ -1204,68 +1137,32 @@ const model = {
         model,
         ev,
         metadata: {
-          apiEventKey: jogo?.event_key || null,
-          eventType: jogo?.event_type_type || null,
-          tournamentRound: jogo?.event_round || null,
-          overround: modelBase?.overround ?? null,
-          oddsSource: odds?.source || null,
-          bookmaker: odds?.bookmaker || null,
-          oddsApiEventId: odds?.oddsApiEventId || null,
-          commenceTimeOdds: odds?.commenceTime || null,
+          oddsSource: "real",
+          bookmaker: odds.bookmaker,
         },
-        timestamp: jogo?.event_time
-          ? new Date(`${jogo.event_date} ${jogo.event_time}`).getTime()
-          : 0,
-      };
-
-      if (status === "live") {
-        aoVivo.push(partida);
-        continue;
-      }
-
-      if (status === "scheduled") {
-        proximos.push(partida);
-        continue;
-      }
-
-      if (status === "finished") {
-        finalizados.push(partida);
-        continue;
-      }
+        timestamp: new Date(evento.commence_time).getTime(),
+      });
     }
 
-    proximos.sort((a, b) => {
-      const t1 = a?.timestamp || 0;
-      const t2 = b?.timestamp || 0;
-      return t1 - t2;
-    });
+    partidas.sort((a, b) => a.timestamp - b.timestamp);
 
-    finalizados.sort((a, b) => {
-      const t1 = a?.timestamp || 0;
-      const t2 = b?.timestamp || 0;
-      return t1 - t2;
-    });
-
-    return res.status(200).json({
+    return res.json({
       resumo: {
-        total: jogosApi.length,
-        aoVivo: aoVivo.length,
-        proximos: proximos.length,
-        finalizados: finalizados.length,
+        total: partidas.length,
+        aoVivo: 0,
+        proximos: partidas.length,
+        finalizados: 0,
       },
-      aoVivo,
-      proximos,
-      finalizados,
+      aoVivo: [],
+      proximos: partidas,
+      finalizados: [],
     });
+
   } catch (error) {
-    console.error(
-      "Erro em /partidas-hoje:",
-      error?.response?.data || error?.message
-    );
+    console.error("[PARTIDAS-HOJE]", error?.message);
 
     return res.status(500).json({
-      erro: "Falha ao buscar partidas",
-      detalhe: error?.response?.data || error?.message,
+      erro: "Erro ao buscar partidas com odds",
     });
   }
 });
