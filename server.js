@@ -58,18 +58,24 @@ function normalizarNome(nome) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\./g, "")
     .replace(/-/g, " ")
+    .replace(/['`´]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
 
 function normalizarTexto(texto) {
-  if (!texto) return null;
-
-  return String(texto)
+  return String(texto || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/['`´]/g, "")
+    .replace(/[^\w\s/()-]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizarTextoBusca(texto) {
+  return normalizarNome(texto).replace(/[^a-z0-9\s/]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function formatarData(data) {
@@ -82,6 +88,42 @@ function formatarDataLocal(data = new Date()) {
   const dia = String(data.getDate()).padStart(2, "0");
   return `${ano}-${mes}-${dia}`;
 }
+
+function montarTimestampSeguro(date, time) {
+  if (!date) return 0;
+
+  const iso = `${date}T${time || "00:00"}:00`;
+  const ts = new Date(iso).getTime();
+
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function arredondar(valor, casas = 4) {
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return null;
+  return Number(n.toFixed(casas));
+}
+
+function calcularProbImplicita(odd) {
+  const o = Number(odd);
+  if (!Number.isFinite(o) || o <= 0) return null;
+  return arredondar(1 / o, 4);
+}
+
+function calcularEV(probabilidade, odd) {
+  const p = Number(probabilidade);
+  const o = Number(odd);
+
+  if (!Number.isFinite(p) || !Number.isFinite(o) || o <= 0) {
+    return null;
+  }
+
+  return arredondar(p * o - 1, 4);
+}
+
+// ==========================
+// LUCRO / APOSTAS
+// ==========================
 
 function calcularLucro(aposta) {
   const stake = Number(aposta?.stake) || 0;
@@ -115,6 +157,10 @@ function atualizarLucroAposta(aposta) {
   };
 }
 
+// ==========================
+// JOGOS / SUPERFÍCIE / STATUS
+// ==========================
+
 function extrairSuperficie(jogo) {
   const candidatos = [
     jogo?.event_surface,
@@ -129,8 +175,7 @@ function extrairSuperficie(jogo) {
     }
   }
 
-  const nomeTorneio =
-    normalizarTexto(jogo?.tournament_name || "")?.toLowerCase() || "";
+  const nomeTorneio = normalizarNome(jogo?.tournament_name || "");
 
   if (
     nomeTorneio.includes("roland garros") ||
@@ -336,29 +381,6 @@ function encontrarJogoDaAposta(jogosApi, aposta) {
 // EV / MODEL
 // ==========================
 
-function arredondar(valor, casas = 4) {
-  const n = Number(valor);
-  if (!Number.isFinite(n)) return null;
-  return Number(n.toFixed(casas));
-}
-
-function calcularProbImplicita(odd) {
-  const o = Number(odd);
-  if (!Number.isFinite(o) || o <= 0) return null;
-  return arredondar(1 / o, 4);
-}
-
-function calcularEV(probabilidade, odd) {
-  const p = Number(probabilidade);
-  const o = Number(odd);
-
-  if (!Number.isFinite(p) || !Number.isFinite(o) || o <= 0) {
-    return null;
-  }
-
-  return arredondar(p * o - 1, 4);
-}
-
 function classificarApostaPorEV(ev) {
   if (ev == null) {
     return {
@@ -406,10 +428,6 @@ function definirRiskLevel(confidence, ev) {
   if (ev >= 0.02 && confidence >= 55) return "medium";
   return "high";
 }
-
-// ==========================
-// ODDS / PROBABILIDADES
-// ==========================
 
 function gerarOddsFallbackEstavel() {
   return null;
@@ -507,6 +525,23 @@ function gerarAnaliseEV(odds, model, confidence) {
   };
 }
 
+// ==========================
+// BETFAIR
+// ==========================
+
+function extrairSobrenome(nome) {
+  const limpo = normalizarNome(nome);
+  if (!limpo) return "";
+  const partes = limpo.split(" ");
+  return partes[partes.length - 1] || limpo;
+}
+
+function simplificarTokensJogador(nome) {
+  const base = normalizarTextoBusca(nome);
+  const partes = base.split(" ").filter(Boolean);
+  return partes.filter((t) => t.length >= 2);
+}
+
 function nomesSaoParecidos(nomeA, nomeB) {
   const a = normalizarNome(nomeA);
   const b = normalizarNome(nomeB);
@@ -514,311 +549,495 @@ function nomesSaoParecidos(nomeA, nomeB) {
   if (!a || !b) return false;
   if (a === b) return true;
 
-  const pa = a.split(" ");
-  const pb = b.split(" ");
+  const sa = extrairSobrenome(nomeA);
+  const sb = extrairSobrenome(nomeB);
 
-  const sobrenomeA = pa[pa.length - 1];
-  const sobrenomeB = pb[pb.length - 1];
+  if (sa && sb && sa === sb) {
+    const pa = a.split(" ");
+    const pb = b.split(" ");
+    const inicialA = pa[0]?.[0] || "";
+    const inicialB = pb[0]?.[0] || "";
+    if (!inicialA || !inicialB || inicialA === inicialB) return true;
+  }
 
-  const inicialA = pa[0]?.[0] || "";
-  const inicialB = pb[0]?.[0] || "";
+  if (a.includes(b) || b.includes(a)) return true;
 
-  return sobrenomeA === sobrenomeB && inicialA === inicialB;
+  return false;
 }
 
-function extrairNomeTorneioOdds(evento) {
-  return String(
-    evento?.sport_title ||
-      evento?.sport_key ||
-      evento?.description ||
-      ""
-  ).toLowerCase();
-}
+function extrairNomesDoEventoBetfair(eventName) {
+  const nome = String(eventName || "");
+  const separadores = [" v ", " vs ", " @ ", " - "];
 
-function torneiosParecidos(nomeApiTennis, eventoOdds) {
-  const torneioApi = normalizarTexto(nomeApiTennis || "")?.toLowerCase() || "";
-  const torneioOdds = extrairNomeTorneioOdds(eventoOdds);
-
-  if (!torneioApi || !torneioOdds) return true;
-
-  const palavrasFortes = torneioApi
-    .split(" ")
-    .filter((p) => p.length >= 4);
-
-  if (palavrasFortes.length === 0) return true;
-
-  return palavrasFortes.some((p) => torneioOdds.includes(p));
-}
-
-function eventoOddsCombinaComJogo(evento, jogo) {
-  const home = evento?.home_team || "";
-  const away = evento?.away_team || "";
-
-  const p1 = jogo?.event_first_player || "";
-  const p2 = jogo?.event_second_player || "";
-
-  const ordemNormal =
-    nomesSaoParecidos(home, p1) && nomesSaoParecidos(away, p2);
-
-  const ordemInvertida =
-    nomesSaoParecidos(home, p2) && nomesSaoParecidos(away, p1);
-
-  if (!(ordemNormal || ordemInvertida)) return false;
-
-  return torneiosParecidos(jogo?.tournament_name, evento);
-}
-
-function extrairOddsH2HDoBookmaker(bookmaker, player1, player2) {
-  const market = Array.isArray(bookmaker?.markets)
-    ? bookmaker.markets.find((m) => m?.key === "h2h")
-    : null;
-
-  if (!market || !Array.isArray(market.outcomes)) return null;
-
-  const outcomes = market.outcomes;
-
-  const out1 = outcomes.find((o) => nomesSaoParecidos(o?.name, player1));
-  const out2 = outcomes.find((o) => nomesSaoParecidos(o?.name, player2));
-
-  if (!out1 || !out2) return null;
-
-  const price1 = Number(out1.price);
-  const price2 = Number(out2.price);
-
-  if (!Number.isFinite(price1) || !Number.isFinite(price2)) return null;
-  if (price1 <= 1 || price2 <= 1) return null;
-
-  return {
-    player1: Number(price1.toFixed(2)),
-    player2: Number(price2.toFixed(2)),
-    source: "real",
-    bookmaker: bookmaker?.title || bookmaker?.key || null,
-    updatedAt: bookmaker?.last_update || new Date().toISOString(),
-  };
-}
-
-function escolherMelhorOddsDoEvento(evento, player1, player2) {
-  const bookmakers = Array.isArray(evento?.bookmakers)
-    ? evento.bookmakers
-    : [];
-
-  if (bookmakers.length === 0) return null;
-
-  // 🔥 PRIORIDADE TOTAL: Betfair Exchange
-  const prioridade = [
-    "betfair_exchange",
-    "betfair_ex_uk",
-    "betfair",
-    "pinnacle",
-    "bet365",
-  ];
-
-  // 1. Tenta pegar Betfair primeiro
-  for (const key of prioridade) {
-    const bookmaker = bookmakers.find(
-      (b) => String(b?.key || "").toLowerCase() === key
-    );
-
-    if (!bookmaker) continue;
-
-    const odds = extrairOddsH2HDoBookmaker(bookmaker, player1, player2);
-
-    if (odds) {
+  for (const sep of separadores) {
+    const regex = new RegExp(sep, "i");
+    const partes = nome.split(regex);
+    if (partes.length === 2) {
       return {
-        ...odds,
-        source: key.includes("betfair") ? "betfair-exchange" : "real",
+        player1: partes[0].trim(),
+        player2: partes[1].trim(),
       };
     }
   }
 
-  // 2. Fallback: qualquer bookmaker válido
-  for (const bookmaker of bookmakers) {
-    const odds = extrairOddsH2HDoBookmaker(bookmaker, player1, player2);
-    if (odds) return odds;
-  }
-
-  return null;
+  return {
+    player1: "",
+    player2: "",
+  };
 }
 
-async function buscarEsportesTennisAtivos() {
-  const apiKey = process.env.ODDS_API_KEY;
-  const baseUrl = process.env.ODDS_API_BASE_URL || "https://api.the-odds-api.com/v4";
+function matchEventoTenisComBetfair(
+  tennisPlayer1,
+  tennisPlayer2,
+  betfairEventName
+) {
+  const { player1, player2 } = extrairNomesDoEventoBetfair(betfairEventName);
 
-  if (!apiKey) return [];
+  if (!player1 || !player2) return false;
+
+  const direto =
+    nomesSaoParecidos(tennisPlayer1, player1) &&
+    nomesSaoParecidos(tennisPlayer2, player2);
+
+  const invertido =
+    nomesSaoParecidos(tennisPlayer1, player2) &&
+    nomesSaoParecidos(tennisPlayer2, player1);
+
+  return direto || invertido;
+}
+
+async function betfairRpc(method, params) {
+  const appKey = process.env.BETFAIR_APP_KEY;
+  const sessionToken = process.env.BETFAIR_SESSION_TOKEN;
+  const baseUrl =
+    process.env.BETFAIR_BASE_URL ||
+    "https://api.betfair.bet.br/exchange/betting/json-rpc/v1";
+
+  if (!appKey || !sessionToken) {
+    throw new Error("BETFAIR_APP_KEY ou BETFAIR_SESSION_TOKEN não configurados");
+  }
+
+  const payload = [
+    {
+      jsonrpc: "2.0",
+      method: `SportsAPING/v1.0/${method}`,
+      params,
+      id: 1,
+    },
+  ];
 
   try {
-    const response = await axios.get(`${baseUrl}/sports`, {
-      params: {
-        apiKey,
+    const response = await axios.post(baseUrl, payload, {
+      headers: {
+        "X-Application": appKey,
+        "X-Authentication": sessionToken,
+        "Content-Type": "application/json",
       },
-      timeout: 12000,
+      timeout: 20000,
     });
 
-    const esportes = Array.isArray(response.data) ? response.data : [];
+    const item = Array.isArray(response.data) ? response.data[0] : response.data;
 
-    return esportes
-      .filter((item) => {
-        const key = String(item?.key || "").toLowerCase();
-        const active = Boolean(item?.active);
-        return active && key.startsWith("tennis_");
-      })
-      .map((item) => item.key);
+    if (item?.error) {
+      const details = JSON.stringify(item.error);
+      throw new Error(`Betfair RPC error: ${details}`);
+    }
+
+    return item?.result;
   } catch (error) {
-    console.error(
-      "[ODDS] Erro ao buscar esportes ativos:",
-      error?.response?.data || error?.message
-    );
-    return [];
+    if (error?.response?.data) {
+      console.error(
+        "[BETFAIR AXIOS RESPONSE DATA]",
+        JSON.stringify(error.response.data, null, 2)
+      );
+    }
+    throw error;
   }
 }
 
-async function buscarEventosOddsTennis() {
-  const apiKey = process.env.ODDS_API_KEY;
-  const baseUrl = process.env.ODDS_API_BASE_URL || "https://api.the-odds-api.com/v4";
+async function buscarMercadosTennisBetfairHoje() {
+  const agora = new Date();
+  const amanha = new Date();
+  amanha.setDate(amanha.getDate() + 1);
+
+  const from = agora.toISOString();
+  const to = amanha.toISOString();
+
+  const result = await betfairRpc("listMarketCatalogue", {
+    filter: {
+      eventTypeIds: ["2"],
+      marketTypeCodes: ["MATCH_ODDS"],
+      marketStartTime: {
+        from,
+        to,
+      },
+    },
+    marketProjection: ["EVENT", "COMPETITION", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
+    sort: "FIRST_TO_START",
+    maxResults: "200",
+  });
+
+  return Array.isArray(result) ? result : [];
+}
+
+const BETFAIR_BOOK_BATCH_SIZE = 40;
+
+async function betfairListarBooks(marketIds, priceProjection) {
+  if (!Array.isArray(marketIds) || marketIds.length === 0) return [];
+
+  const proj = priceProjection || {
+    priceData: ["EX_BEST_OFFERS"],
+    virtualise: true,
+    rolloverStakes: false,
+  };
+
+  const resultados = [];
+
+  for (let i = 0; i < marketIds.length; i += BETFAIR_BOOK_BATCH_SIZE) {
+    const batch = marketIds.slice(i, i + BETFAIR_BOOK_BATCH_SIZE);
+    const batchResult = await betfairRpc("listMarketBook", {
+      marketIds: batch,
+      priceProjection: proj,
+    });
+    if (Array.isArray(batchResult)) {
+      resultados.push(...batchResult);
+    }
+  }
+
+  return resultados;
+}
+
+
+// ==========================
+// API TENNIS
+// ==========================
+
+async function buscarJogosApiTennisHoje() {
+  const apiKey = process.env.API_TENNIS_KEY;
+  const baseUrl =
+    process.env.API_TENNIS_BASE_URL || "https://api.api-tennis.com/tennis/";
 
   if (!apiKey) {
-    console.warn("[ODDS] ODDS_API_KEY não configurada.");
-    return [];
+    throw new Error("API_TENNIS_KEY não configurada");
   }
 
-  let sportKeys = await buscarEsportesTennisAtivos();
+  const hoje = formatarData(new Date());
+  const amanhaDate = new Date();
+  amanhaDate.setDate(amanhaDate.getDate() + 1);
+  const amanha = formatarData(amanhaDate);
 
-  if (!sportKeys.length) {
-    sportKeys = [
-      "tennis_atp_monte_carlo_masters",
-      "tennis_wta_charleston_open",
-    ];
-    console.warn("[ODDS] Usando fallback manual de sportKeys:", sportKeys);
-  }
+  const response = await axios.get(baseUrl, {
+    params: {
+      method: "get_fixtures",
+      APIkey: apiKey,
+      date_start: hoje,
+      date_stop: amanha,
+    },
+    timeout: 20000,
+  });
 
-  console.log("[ODDS] sportKeys encontrados:", sportKeys);
-
-  const resultados = await Promise.allSettled(
-    sportKeys.map((sportKey) =>
-      axios.get(`${baseUrl}/sports/${sportKey}/odds`, {
-        params: {
-          apiKey,
-          regions: "eu,uk,us",
-          markets: "h2h",
-          oddsFormat: "decimal",
-          dateFormat: "iso",
-        },
-        timeout: 12000,
-      })
-    )
-  );
-
-  const eventos = resultados
-    .filter((r) => r.status === "fulfilled")
-    .flatMap((r) => (Array.isArray(r.value?.data) ? r.value.data : []));
-
-  console.log("[ODDS] total eventos carregados:", eventos.length);
-
-  return eventos;
+  return Array.isArray(response.data?.result) ? response.data.result : [];
 }
 
-async function buscarOddsReaisParaJogo(jogo, cacheEventosOdds) {
-  const player1 = jogo?.event_first_player;
-  const player2 = jogo?.event_second_player;
+// ==========================
+// HELPERS - PARTIDAS HOJE
+// ==========================
+
+function parseDataHoraPartida(partida) {
+  const data = partida?.event_date || partida?.date || null;
+  const hora = partida?.event_time || partida?.time || "00:00";
+
+  if (!data) return null;
+
+  const hhmm = /^\d{2}:\d{2}$/.test(hora) ? hora : "00:00";
+  const iso = `${data}T${hhmm}:00`;
+  const dt = new Date(iso);
+
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function statusPadronizado(partida) {
+  const raw = normalizarTextoBusca(
+    partida?.event_status ||
+      partida?.status ||
+      partida?.match_status ||
+      ""
+  );
+
+  if (
+    raw.includes("finished") ||
+    raw.includes("final") ||
+    raw.includes("ended") ||
+    raw.includes("ft") ||
+    raw.includes("retired")
+  ) {
+    return "finished";
+  }
+
+  if (
+    raw.includes("live") ||
+    raw.includes("in play") ||
+    raw.includes("1st set") ||
+    raw.includes("2nd set") ||
+    raw.includes("3rd set") ||
+    raw.includes("set") ||
+    raw.includes("interrupted")
+  ) {
+    return "live";
+  }
+
+  if (raw.includes("cancel")) {
+    return "cancelled";
+  }
+
+  return "scheduled";
+}
+
+function scorePadronizado(partida) {
+  return (
+    partida?.event_final_result ||
+    partida?.scores ||
+    partida?.score ||
+    partida?.ss ||
+    ""
+  );
+}
+
+function obterNomeJogador1(partida) {
+  return (
+    partida?.event_first_player ||
+    partida?.player1 ||
+    partida?.home ||
+    partida?.home_name ||
+    ""
+  );
+}
+
+function obterNomeJogador2(partida) {
+  return (
+    partida?.event_second_player ||
+    partida?.player2 ||
+    partida?.away ||
+    partida?.away_name ||
+    ""
+  );
+}
+
+function isDuplas(nome) {
+  return String(nome || "").includes("/");
+}
+
+function torneiosParecidos(torneioApi, torneioBf) {
+  const a = normalizarTextoBusca(torneioApi);
+  const b = normalizarTextoBusca(torneioBf);
+
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.includes(b) || b.includes(a)) return true;
+
+  const tokensA = a.split(" ").filter((t) => t.length >= 4);
+  const tokensB = b.split(" ").filter((t) => t.length >= 4);
+
+  let comuns = 0;
+  for (const t of tokensA) {
+    if (tokensB.includes(t)) comuns++;
+  }
+
+  return comuns >= 1;
+}
+
+function nomesBatem(nomeA, nomeB) {
+  const a = normalizarNome(nomeA);
+  const b = normalizarNome(nomeB);
+
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const tokensA = a.split(" ").filter(Boolean);
+  const tokensB = b.split(" ").filter(Boolean);
+
+  const sigA = tokensA.filter((t) => t.length >= 3);
+  const sigB = tokensB.filter((t) => t.length >= 3);
+
+  if (!sigA.length || !sigB.length) return false;
+
+  const sobrenomeComum = sigA.find((tA) => sigB.includes(tA));
+  if (!sobrenomeComum) return false;
+
+  const restA = tokensA.filter((t) => t !== sobrenomeComum);
+  const restB = tokensB.filter((t) => t !== sobrenomeComum);
+
+  if (!restA.length || !restB.length) return true;
+
+  const inicialA = (restA.find((t) => t.length === 1) || restA[0])[0];
+  const inicialB = (restB.find((t) => t.length === 1) || restB[0])[0];
+
+  return inicialA === inicialB;
+}
+
+function nomesEventoParecidos(j1a, j2a, j1b, j2b) {
+  const ordemDireta = nomesBatem(j1a, j1b) && nomesBatem(j2a, j2b);
+  const ordemInvertida = nomesBatem(j1a, j2b) && nomesBatem(j2a, j1b);
+  return ordemDireta || ordemInvertida;
+}
+
+function montarIndiceBetfair(mercados, books) {
+  return mercados.map((market) => {
+    const book = books.find((b) => b.marketId === market.marketId) || null;
+    const runners = Array.isArray(market.runners) ? market.runners : [];
+    const players = runners.map((runner) => ({
+      selectionId: runner.selectionId,
+      name: runner.runnerName || "",
+    }));
+
+    return {
+      marketId: market.marketId || null,
+      marketName: market.marketName || null,
+      event: market?.event?.name || "",
+      competition: market?.competition?.name || "",
+      openDate: market?.marketStartTime || market?.event?.openDate || null,
+      totalMatched: Number(book?.totalMatched || market?.totalMatched || 0),
+      market,
+      book,
+      players,
+    };
+  });
+}
+
+function encontrarOddsBetfairParaPartida(jogo, indiceBetfair) {
+  const player1 = obterNomeJogador1(jogo);
+  const player2 = obterNomeJogador2(jogo);
+  const torneioJogo = jogo?.tournament_name || "";
+  const dataHoraJogo = parseDataHoraPartida(jogo);
 
   if (!player1 || !player2) return null;
-  if (!Array.isArray(cacheEventosOdds) || !cacheEventosOdds.length) return null;
 
-  const p1 = normalizarNome(player1);
-  const p2 = normalizarNome(player2);
+  const jogoEhDuplas = isDuplas(player1) || isDuplas(player2);
 
-  let melhorMatch = null;
-  let melhorScore = 0;
+  let melhor = null;
+  let melhorScore = -1;
 
-for (const evento of cacheEventosOdds) {
-  const home = normalizarNome(evento?.home_team || "");
-  const away = normalizarNome(evento?.away_team || "");
+  for (const item of indiceBetfair) {
+    const eventoBetfair = item.event || "";
+    const torneioBetfair = item.competition || "";
+    const playersBetfair = item.players || [];
+    const book = item.book;
+    const market = item.market;
 
-  if (!home || !away) continue;
+    if (!book || !market || playersBetfair.length < 2) continue;
 
-  // 🔥 NOVO BLOCO (COLOCA AQUI)
-  const jogoTime = new Date(
-    (jogo?.event_date || "") + " " + (jogo?.event_time || "")
-  ).getTime();
+    const bfP1 = playersBetfair[0]?.name || "";
+    const bfP2 = playersBetfair[1]?.name || "";
 
-  const eventoTime = new Date(evento?.commence_time || 0).getTime();
+    const mercadoEhDuplas = isDuplas(bfP1) || isDuplas(bfP2);
+    if (jogoEhDuplas !== mercadoEhDuplas) continue;
 
-  const diffHoras = Math.abs(jogoTime - eventoTime) / (1000 * 60 * 60);
+    const matchDireto = nomesBatem(player1, bfP1) && nomesBatem(player2, bfP2);
+    const matchInvertido = nomesBatem(player1, bfP2) && nomesBatem(player2, bfP1);
 
-  // 🔥 FILTRO DE TEMPO
-  if (diffHoras > 6) {
-    continue;
+    if (!matchDireto && !matchInvertido) continue;
+
+    let score = 100;
+
+    if (torneiosParecidos(torneioJogo, torneioBetfair)) {
+      score += 20;
+    }
+
+    if (dataHoraJogo && item.openDate) {
+      const dtBf = new Date(item.openDate);
+      if (!Number.isNaN(dtBf.getTime())) {
+        const diffMin = Math.abs(dataHoraJogo.getTime() - dtBf.getTime()) / 60000;
+
+        if (diffMin <= 15) score += 20;
+        else if (diffMin <= 45) score += 12;
+        else if (diffMin <= 90) score += 6;
+      }
+    }
+
+    const liquidez = Number(item.totalMatched || 0);
+    if (liquidez >= 50000) score += 8;
+    else if (liquidez >= 10000) score += 5;
+    else if (liquidez >= 3000) score += 2;
+
+    let oddPlayer1 = null;
+    let oddPlayer2 = null;
+
+    for (const runner of market.runners || []) {
+      const bookRunner = book.runners?.find(
+        (br) => br.selectionId === runner.selectionId
+      );
+      const preco = bookRunner?.ex?.availableToBack?.[0]?.price ?? null;
+      if (preco == null) continue;
+
+      const runnerNome = runner.runnerName || "";
+
+      if (nomesBatem(player1, runnerNome)) oddPlayer1 = preco;
+      else if (nomesBatem(player2, runnerNome)) oddPlayer2 = preco;
+    }
+
+    if (oddPlayer1 == null && oddPlayer2 == null) continue;
+
+    if (score > melhorScore) {
+      melhorScore = score;
+      melhor = {
+        player1: oddPlayer1,
+        player2: oddPlayer2,
+        source: "betfair",
+        bookmaker: "Betfair Exchange",
+        updatedAt: new Date().toISOString(),
+        marketId: market.marketId || null,
+        marketName: market.marketName || null,
+        eventName: eventoBetfair || null,
+        competition: torneioBetfair || null,
+        totalMatched: liquidez,
+        matchedBy: "betfair-scored-match",
+        confidence: score,
+      };
+    }
   }
 
-  let score = 0;
+  if (!melhor) return null;
 
-if (nomesSaoParecidos(home, p1)) score += 2;
-if (nomesSaoParecidos(away, p2)) score += 2;
+  const scoreMinimo = jogoEhDuplas ? 112 : 105;
+  if ((melhor.confidence || 0) < scoreMinimo) return null;
 
-if (nomesSaoParecidos(home, p2)) score += 2;
-if (nomesSaoParecidos(away, p1)) score += 2;
-
-  const sobrenome1 = (p1 || "").split(" ").pop();
-  const sobrenome2 = (p2 || "").split(" ").pop();
-
-  if (home.includes(sobrenome1)) score += 1;
-  if (away.includes(sobrenome2)) score += 1;
-
-  console.log(
-    "[MATCH DEBUG]",
-    player1,
-    "vs",
-    player2,
-    "| tentando:",
-    evento.home_team,
-    "vs",
-    evento.away_team,
-    "| score:",
-    score
-  );
-
-  if (score > melhorScore) {
-    melhorScore = score;
-    melhorMatch = evento;
-  }
-} // 👈 🔥 FECHA O FOR AQUI
-
-// 🔥 AGORA SIM fora do loop
-if (!melhorMatch || melhorScore < 1) {
-  console.log(
-    "[ODDS] FALLBACK:",
-    player1,
-    "vs",
-    player2,
-    "| score:",
-    melhorScore
-  );
-  return null;
+  return melhor;
 }
 
-console.log(
-  "[MATCH FINAL]",
-  player1,
-  "vs",
-  player2,
-  "| melhorScore:",
-  melhorScore
-);
+function oddsBetfairSaoValidas(match, torneio) {
+  if (!match) return false;
 
-const odds = escolherMelhorOddsDoEvento(
-  melhorMatch,
-  player1,
-  player2
-);
+  const o1 = Number(match.player1);
+  const o2 = Number(match.player2);
 
-if (!odds) return null;
+  // Ambas as odds devem estar preenchidas e ser válidas
+  if (!o1 || !o2 || !Number.isFinite(o1) || !Number.isFinite(o2)) return false;
 
-return {
-  ...odds,
-  oddsApiEventId: melhorMatch?.id || null,
-  commenceTime: melhorMatch?.commence_time || null,
-};
-} 
+  // Qualquer lado <= 1.05 — sem valor, mercado fechado ou erro
+  if (o1 <= 1.05 || o2 <= 1.05) return false;
+
+  // Desequilíbrio extremo — razão > 6 (ex: 8.6 x 1.12 = 7.7, 15 x 1.05 = 14.3)
+  const ratio = Math.max(o1, o2) / Math.min(o1, o2);
+  if (ratio > 6) return false;
+
+  const totalMatched = Number(match.totalMatched) || 0;
+  const torneioNorm = normalizarNome(torneio || "");
+
+  const ehMinor =
+    torneioNorm.includes("itf") ||
+    torneioNorm.includes("challenger") ||
+    torneioNorm.includes("futures") ||
+    torneioNorm.includes("125k") ||
+    torneioNorm.includes("75k") ||
+    torneioNorm.includes("50k") ||
+    torneioNorm.includes("25k");
+
+  const minimoLiquidez = ehMinor ? 1000 : 3000;
+
+  if (totalMatched < minimoLiquidez) return false;
+
+  return true;
+}
 
 // ==========================
 // ROTA BASE
@@ -826,6 +1045,233 @@ return {
 
 app.get("/", (_req, res) => {
   res.json({ status: "BeTennis API rodando 🚀" });
+});
+
+app.get("/betfair-test", async (_req, res) => {
+  try {
+    const result = await betfairRpc("listEventTypes", {
+      filter: {},
+    });
+
+    return res.json({
+      ok: true,
+      result,
+    });
+  } catch (err) {
+    console.error("[BETFAIR TEST ERROR RAW]", err);
+
+    return res.status(500).json({
+      erro: err.message,
+      raw: {
+        responseData: err?.response?.data || null,
+        status: err?.response?.status || null,
+      },
+    });
+  }
+});
+
+// ==========================
+// BETFAIR - TÊNIS
+// ==========================
+app.get("/betfair-tennis", async (_req, res) => {
+  try {
+    const agora = new Date();
+    const em7Dias = new Date();
+    em7Dias.setDate(em7Dias.getDate() + 7);
+
+    const resultado = await betfairRpc("listMarketCatalogue", {
+      filter: {
+        eventTypeIds: ["2"],
+        marketTypeCodes: ["MATCH_ODDS"],
+        marketStartTime: {
+          from: agora.toISOString(),
+          to: em7Dias.toISOString(),
+        },
+      },
+      marketProjection: [
+        "EVENT",
+        "EVENT_TYPE",
+        "COMPETITION",
+        "RUNNER_DESCRIPTION",
+        "MARKET_START_TIME",
+      ],
+      sort: "FIRST_TO_START",
+      maxResults: "100",
+    });
+
+    const mercados = Array.isArray(resultado) ? resultado : [];
+
+    const jogos = mercados.map((market) => {
+      const runners = Array.isArray(market.runners) ? market.runners : [];
+
+      return {
+        marketId: market.marketId || null,
+        marketName: market.marketName || null,
+        totalMatched: market.totalMatched || 0,
+
+        eventType: market.eventType?.name || null,
+        competition: market.competition?.name || null,
+
+        event: {
+          id: market.event?.id || null,
+          name: market.event?.name || null,
+          openDate: market.event?.openDate || null,
+          venue: market.event?.venue || null,
+        },
+
+        players: runners.map((runner) => ({
+          selectionId: runner.selectionId || null,
+          runnerName: runner.runnerName || null,
+          handicap: runner.handicap || 0,
+          sortPriority: runner.sortPriority || null,
+        })),
+      };
+    });
+
+    return res.json({
+      ok: true,
+      total: jogos.length,
+      result: jogos,
+    });
+  } catch (error) {
+    console.error("[/betfair-tennis] erro:", error.response?.data || error.message);
+
+    return res.status(500).json({
+      ok: false,
+      error:
+        error.response?.data ||
+        error.message ||
+        "Erro ao buscar mercados de tênis na Betfair",
+    });
+  }
+});
+
+// ==========================
+// BETFAIR - ODDS REAIS
+// ==========================
+app.get("/betfair-odds", async (_req, res) => {
+  try {
+    const agora = new Date();
+    const em24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const mercados = await betfairRpc("listMarketCatalogue", {
+      filter: {
+        eventTypeIds: ["2"],
+        marketTypeCodes: ["MATCH_ODDS"],
+        marketStartTime: {
+          from: agora.toISOString(),
+          to: em24h.toISOString(),
+        },
+      },
+      marketProjection: [
+        "EVENT",
+        "COMPETITION",
+        "RUNNER_DESCRIPTION",
+        "MARKET_START_TIME",
+      ],
+      sort: "FIRST_TO_START",
+      maxResults: "200",
+    });
+
+    const listaMercados = Array.isArray(mercados) ? mercados : [];
+
+    const marketIds = listaMercados.map((m) => m?.marketId).filter(Boolean);
+
+    if (!marketIds.length) {
+      return res.json({
+        ok: true,
+        total: 0,
+        result: [],
+      });
+    }
+
+    const books = await betfairListarBooks(marketIds, {
+      priceData: ["EX_BEST_OFFERS"],
+      virtualise: false,
+      rolloverStakes: false,
+    });
+
+    const listaBooks = Array.isArray(books) ? books : [];
+
+    const resultado = listaMercados
+      .filter((market) => marketIds.includes(market.marketId))
+      .map((market) => {
+        const book = listaBooks.find((b) => b.marketId === market.marketId);
+
+        const runners = Array.isArray(market.runners) ? market.runners : [];
+        const bookRunners = Array.isArray(book?.runners) ? book.runners : [];
+
+        const players = runners
+          .map((runner) => {
+            const bookRunner = bookRunners.find(
+              (r) => r.selectionId === runner.selectionId
+            );
+
+            const back = bookRunner?.ex?.availableToBack?.[0]?.price ?? null;
+            const lay = bookRunner?.ex?.availableToLay?.[0]?.price ?? null;
+
+            if (back == null && lay == null) return null;
+
+            return {
+              selectionId: runner.selectionId ?? null,
+              name: runner.runnerName || null,
+              back,
+              lay,
+            };
+          })
+          .filter(Boolean);
+
+        if (players.length < 2) return null;
+
+        return {
+          marketId: market.marketId || null,
+          marketName: market.marketName || null,
+          totalMatched: book?.totalMatched ?? market?.totalMatched ?? 0,
+          competition: market.competition?.name || null,
+          event: market.event?.name || null,
+          openDate: market.marketStartTime || market.event?.openDate || null,
+          players,
+        };
+      })
+      .filter(Boolean)
+      .filter((m) => {
+        if (!m.totalMatched || m.totalMatched < 3000) return false;
+
+        const p1 = m.players?.[0]?.back;
+        const p2 = m.players?.[1]?.back;
+        const l1 = m.players?.[0]?.lay;
+        const l2 = m.players?.[1]?.lay;
+
+        if (!p1 || !p2) return false;
+        if (p1 < 1.05 || p2 < 1.05) return false;
+        if (p1 > 100 || p2 > 100) return false;
+        if (l1 != null && (l1 < 1.01 || l1 > 200)) return false;
+        if (l2 != null && (l2 < 1.01 || l2 > 200)) return false;
+
+        return true;
+      })
+      .sort((a, b) => (b.totalMatched || 0) - (a.totalMatched || 0))
+      .slice(0, 15);
+
+    return res.json({
+      ok: true,
+      total: resultado.length,
+      result: resultado,
+    });
+  } catch (error) {
+    console.error(
+      "[/betfair-odds] erro:",
+      error?.response?.data || error?.message || error
+    );
+
+    return res.status(500).json({
+      ok: false,
+      error:
+        error?.response?.data ||
+        error?.message ||
+        "Erro ao buscar odds reais da Betfair",
+    });
+  }
 });
 
 // ==========================
@@ -859,7 +1305,9 @@ app.get("/normalizar-apostas", (_req, res) => {
 
       if (aposta.probImplicita === undefined) {
         aposta.probImplicita =
-          Number(aposta?.odd) > 0 ? Number((1 / Number(aposta.odd)).toFixed(4)) : null;
+          Number(aposta?.odd) > 0
+            ? Number((1 / Number(aposta.odd)).toFixed(4))
+            : null;
         mudou = true;
       }
 
@@ -867,7 +1315,9 @@ app.get("/normalizar-apostas", (_req, res) => {
         aposta.edge =
           aposta.probModelo != null && aposta.probImplicita != null
             ? Number(
-                (Number(aposta.probModelo) - Number(aposta.probImplicita)).toFixed(4)
+                (
+                  Number(aposta.probModelo) - Number(aposta.probImplicita)
+                ).toFixed(4)
               )
             : null;
         mudou = true;
@@ -1054,117 +1504,195 @@ app.delete("/apostas/:id", (req, res) => {
 });
 
 // ==========================
-// PARTIDAS HOJE COM EV
+// PARTIDAS HOJE (COM BETFAIR AJUSTADO)
 // ==========================
-
 app.get("/partidas-hoje", async (_req, res) => {
   try {
-    const eventos = await buscarEventosOddsTennis();
+    const apiKey = process.env.API_TENNIS_KEY;
 
-    if (!eventos.length) {
-      return res.json({
-        resumo: {
-          total: 0,
-          aoVivo: 0,
-          proximos: 0,
-          finalizados: 0,
-        },
-        aoVivo: [],
-        proximos: [],
-        finalizados: [],
+    if (!apiKey) {
+      return res.status(500).json({
+        erro: "API_TENNIS_KEY não configurada",
       });
     }
 
-    const proximos = [];
-    const aoVivo = [];
-    const finalizados = [];
+    const hoje = new Date().toISOString().slice(0, 10);
 
-    for (const evento of eventos) {
-      const player1 = evento?.home_team;
-      const player2 = evento?.away_team;
+    const response = await axios.get("https://api.api-tennis.com/tennis/", {
+      params: {
+        method: "get_fixtures",
+        APIkey: apiKey,
+        date_start: hoje,
+        date_stop: hoje,
+      },
+      timeout: 20000,
+    });
 
-      if (!player1 || !player2) continue;
+    const jogosApi = Array.isArray(response.data?.result)
+      ? response.data.result
+      : [];
 
-      const odds = escolherMelhorOddsDoEvento(evento, player1, player2);
-      if (!odds) continue;
+    // Janela inclui partidas em andamento (2h atrás) e as próximas 30h
+    const janelaDe = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const janelaAte = new Date(Date.now() + 30 * 60 * 60 * 1000);
 
-      if (
-        !Number.isFinite(Number(odds.player1)) ||
-        !Number.isFinite(Number(odds.player2)) ||
-        Number(odds.player1) <= 1 ||
-        Number(odds.player2) <= 1
-      ) {
-        continue;
+    let indiceBetfair = [];
+    try {
+      const mercados = await betfairRpc("listMarketCatalogue", {
+        filter: {
+          eventTypeIds: ["2"],
+          marketTypeCodes: ["MATCH_ODDS"],
+          marketStartTime: {
+            from: janelaDe.toISOString(),
+            to: janelaAte.toISOString(),
+          },
+        },
+        marketProjection: [
+          "EVENT",
+          "COMPETITION",
+          "RUNNER_DESCRIPTION",
+          "MARKET_START_TIME",
+        ],
+        sort: "FIRST_TO_START",
+        maxResults: "200",
+      });
+
+      const listaMercados = Array.isArray(mercados) ? mercados : [];
+      const marketIds = listaMercados.map((m) => m.marketId).filter(Boolean);
+
+      let listaBooks = [];
+      if (marketIds.length) {
+        listaBooks = await betfairListarBooks(marketIds);
       }
 
-      const commence = evento?.commence_time ? new Date(evento.commence_time) : null;
-      const date = commence ? commence.toISOString().split("T")[0] : null;
-      const time = commence
-        ? commence.toISOString().split("T")[1]?.slice(0, 5) || null
-        : null;
+      indiceBetfair = montarIndiceBetfair(listaMercados, listaBooks);
+    } catch (betfairErr) {
+      console.warn("[/partidas-hoje] Betfair indisponível, continuando sem odds:", betfairErr?.message);
+    }
 
-      const modelBase = gerarModeloAPartirDasOdds(odds);
+    const partidas = jogosApi.map((jogo) => {
+      const player1 = obterNomeJogador1(jogo);
+      const player2 = obterNomeJogador2(jogo);
 
-      const model = {
-        ...modelBase,
-        confidence: 70,
-      };
+      const matchBetfair = encontrarOddsBetfairParaPartida(jogo, indiceBetfair);
+      const oddValida = oddsBetfairSaoValidas(matchBetfair, jogo.tournament_name);
 
-      const ev = gerarAnaliseEV(odds, model, 70);
+      const odds = oddValida
+        ? {
+            player1: matchBetfair.player1,
+            player2: matchBetfair.player2,
+            source: "betfair",
+            bookmaker: matchBetfair.bookmaker || "Betfair Exchange",
+            updatedAt: matchBetfair.updatedAt || null,
+            marketId: matchBetfair.marketId || null,
+            marketName: matchBetfair.marketName || null,
+            eventName: matchBetfair.eventName || null,
+            competition: matchBetfair.competition || null,
+            totalMatched: matchBetfair.totalMatched || 0,
+            confidence: matchBetfair.confidence || 0,
+          }
+        : {
+            player1: null,
+            player2: null,
+            source: "none",
+          };
 
-      proximos.push({
-        id: String(
-          evento?.id || `${player1}-${player2}-${evento?.commence_time || ""}`
-        ),
+      const model =
+        odds.player1 && odds.player2
+          ? gerarModeloAPartirDasOdds(odds)
+          : {
+              probabilityPlayer1: null,
+              probabilityPlayer2: null,
+              overround: null,
+              source: "none",
+            };
+
+      const confidence = odds.source === "betfair"
+        ? Math.min(95, (matchBetfair?.confidence || 0))
+        : calcularConfiancaBase(jogo);
+
+      const ev =
+        odds.player1 && odds.player2
+          ? gerarAnaliseEV(odds, model, confidence)
+          : {
+              player1: null,
+              player2: null,
+              bestSide: null,
+              bestEV: null,
+              recommendation: "Sem odds",
+              noBetZone: true,
+              label: "Sem dados",
+              faixa: "indefinida",
+              riskLevel: "unknown",
+            };
+
+      return {
+        id: jogo.event_key,
         player1,
         player2,
-        tournament: evento?.sport_title || evento?.sport_key || "Tennis",
-        surface: null,
-        date,
-        time,
-        status: "scheduled",
-        score: null,
+        tournament: jogo.tournament_name || null,
+        surface: extrairSuperficie(jogo),
+        date: jogo.event_date || null,
+        time: jogo.event_time || null,
+        status: statusPadronizado(jogo),
+        statusOriginal: jogo.event_status || "",
+        score: scorePadronizado(jogo),
         odds,
         market: {
-          name: "h2h",
-          probImplicitaPlayer1: calcularProbImplicita(odds.player1),
-          probImplicitaPlayer2: calcularProbImplicita(odds.player2),
+          name: "MATCH_ODDS",
+          source: odds.source,
         },
         model,
         ev,
         metadata: {
-          oddsSource: odds.source,
-          bookmaker: odds.bookmaker,
-          oddsApiEventId: evento?.id || null,
-          commenceTime: evento?.commence_time || null,
-          sportKey: evento?.sport_key || null,
+          eventId: jogo.event_key || null,
+          confidence,
         },
-        timestamp: commence ? commence.getTime() : 0,
-      });
+      };
+    });
+
+    const aoVivo = [];
+    const proximos = [];
+    const finalizados = [];
+
+    for (const partida of partidas) {
+      if (partida.status === "live") {
+        aoVivo.push(partida);
+      } else if (partida.status === "finished" || partida.status === "cancelled") {
+        finalizados.push(partida);
+      } else {
+        proximos.push(partida);
+      }
     }
 
-    proximos.sort((a, b) => a.timestamp - b.timestamp);
+    const ordenarPorHorario = (a, b) => {
+      const ta = montarTimestampSeguro(a.date, a.time);
+      const tb = montarTimestampSeguro(b.date, b.time);
+      return ta - tb;
+    };
+
+    aoVivo.sort(ordenarPorHorario);
+    proximos.sort(ordenarPorHorario);
+    finalizados.sort(ordenarPorHorario);
 
     return res.json({
       resumo: {
-        total: aoVivo.length + proximos.length + finalizados.length,
+        total: partidas.length,
         aoVivo: aoVivo.length,
         proximos: proximos.length,
         finalizados: finalizados.length,
+        comOddsBetfair: partidas.filter((p) => p.odds.source === "betfair").length,
       },
       aoVivo,
       proximos,
       finalizados,
+      partidas,
     });
   } catch (error) {
-    console.error(
-      "[PARTIDAS-HOJE] Erro:",
-      error?.response?.data || error?.message
-    );
+    console.error("[/partidas-hoje]", error?.response?.data || error?.message || error);
 
     return res.status(500).json({
-      erro: "Erro ao buscar partidas com odds reais",
-      detalhe: error?.response?.data || error?.message,
+      erro: error?.response?.data || error?.message || "Erro ao buscar partidas de hoje",
     });
   }
 });
