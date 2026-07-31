@@ -336,23 +336,54 @@ function isJogoFinalizado(jogo) {
   return false;
 }
 
+// Extrai { sobrenome, nome } de um nome de jogador, entendendo tanto o
+// formato "Sobrenome, Nome" (usado internamente nas apostas) quanto
+// "Nome Sobrenome" (formato mais comum retornado pela API Tennis).
+function extrairComponentesNome(nomeBruto) {
+  const bruto = String(nomeBruto || "").trim();
+  if (!bruto) return { sobrenome: "", nome: "" };
+
+  if (bruto.includes(",")) {
+    const [sobrenomeParte, nomeParte = ""] = bruto.split(",");
+    return {
+      sobrenome: normalizarNome(sobrenomeParte),
+      nome: normalizarNome(nomeParte),
+    };
+  }
+
+  const partes = normalizarNome(bruto).split(" ").filter(Boolean);
+  if (partes.length === 0) return { sobrenome: "", nome: "" };
+  if (partes.length === 1) return { sobrenome: partes[0], nome: "" };
+
+  // assume "Nome Sobrenome" (ou "Nome Sobrenome Composto")
+  return {
+    sobrenome: partes.slice(1).join(" "),
+    nome: partes[0],
+  };
+}
+
 function matchJogador(nomeApi, nomeAposta) {
-  const apiNormalizado = normalizarNome(nomeApi);
-  const apostaNormalizada = normalizarNome(nomeAposta);
+  const api = extrairComponentesNome(nomeApi);
+  const aposta = extrairComponentesNome(nomeAposta);
 
-  if (!apiNormalizado || !apostaNormalizada) return false;
-  if (apiNormalizado === apostaNormalizada) return true;
+  if (!api.sobrenome || !aposta.sobrenome) return false;
 
-  const api = apiNormalizado.split(" ");
-  const aposta = apostaNormalizada.split(" ");
+  // sobrenome igual, ou um contém o outro (cobre sobrenomes compostos que a
+  // API às vezes abrevia, ex: "Bassols Ribera" vs "Bassols")
+  const sobrenomeBate =
+    api.sobrenome === aposta.sobrenome ||
+    (api.sobrenome.length >= 4 && aposta.sobrenome.includes(api.sobrenome)) ||
+    (aposta.sobrenome.length >= 4 && api.sobrenome.includes(aposta.sobrenome));
 
-  const sobrenomeApi = api[api.length - 1];
-  const sobrenomeAposta = aposta[aposta.length - 1];
+  if (!sobrenomeBate) return false;
 
-  const inicialApi = api[0] ? api[0][0] : "";
-  const inicialAposta = aposta[0] ? aposta[0][0] : "";
+  // se os dois lados têm primeiro nome, a inicial precisa bater
+  // (evita colisão entre jogadores diferentes com mesmo sobrenome)
+  if (api.nome && aposta.nome) {
+    return api.nome[0] === aposta.nome[0];
+  }
 
-  return sobrenomeApi === sobrenomeAposta && inicialApi === inicialAposta;
+  return true;
 }
 
 function encontrarJogoDaAposta(jogosApi, aposta) {
@@ -1778,10 +1809,9 @@ app.get("/validar-apostas", async (_req, res) => {
         continue;
       }
 
-      aposta.resultado =
-        normalizarNome(aposta.escolha) === normalizarNome(vencedor)
-          ? "win"
-          : "loss";
+      aposta.resultado = matchJogador(vencedor, aposta.escolha)
+        ? "win"
+        : "loss";
 
       aposta.lucro = calcularLucro(aposta);
       aposta.updatedAt = new Date().toISOString();
