@@ -9,7 +9,8 @@ const axios = require("axios");
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-const apostasFile = path.join(__dirname, "apostas.json");
+const DATA_DIR = "/app/data";
+const apostasFile = path.join(DATA_DIR, "apostas.json");
 
 app.use(express.json());
 
