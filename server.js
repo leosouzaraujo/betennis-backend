@@ -332,7 +332,6 @@ function isJogoFinalizado(jogo) {
   ];
 
   if (finalStatuses.includes(status)) return true;
-  if (jogo?.event_final_result) return true;
 
   return false;
 }
@@ -1764,7 +1763,7 @@ app.get("/validar-apostas", async (_req, res) => {
       dataInicio.setDate(dataInicio.getDate() - 1);
 
       const dataFim = new Date(dataBase);
-      dataFim.setDate(dataFim.getDate() + 7);
+      dataFim.setDate(dataFim.getDate() + 5);
 
       const dateStart = formatarDataLocal(dataInicio);
       const dateStop = formatarDataLocal(dataFim);
